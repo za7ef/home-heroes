@@ -32,7 +32,6 @@ data class Kid(
     val name: String,
     val age: String,
     val imageRes: Int,
-    val bodyRes: Int,
     val color: Int,
     /** وضع الصغار: صور وصوت فقط بدون الاعتماد على القراءة */
     val toddler: Boolean,
@@ -43,10 +42,10 @@ data class Kid(
 
 object Family {
     val kids = listOf(
-        Kid("ayan", "أيان", "سنتين ونص", R.drawable.face_ayan, R.drawable.body_ayan, 0xFF4DABF7.toInt(), true, true, "عمّه عبدالرحمن"),
-        Kid("layan", "ليان", "6 سنين", R.drawable.face_layan, R.drawable.body_layan, 0xFFF783AC.toInt(), false, true, "أخوها ريان، وخالها عبدالرحمن"),
-        Kid("rayan", "ريان", "10 سنين", R.drawable.face_rayan, R.drawable.body_rayan, 0xFF51CF66.toInt(), false, false, "أخته ليان، وخاله عبدالرحمن"),
-        Kid("abdulrahman", "عبدالرحمن", "14 سنة", R.drawable.face_abdulrahman, R.drawable.body_abdulrahman, 0xFFFF922B.toInt(), false, false, "عم أيان، وخال ريان وليان"),
+        Kid("ayan", "أيان", "سنتين ونص", R.drawable.face_ayan, 0xFF4DABF7.toInt(), true, true, "عمّه عبدالرحمن"),
+        Kid("layan", "ليان", "6 سنين", R.drawable.face_layan, 0xFFF783AC.toInt(), false, true, "أخوها ريان، وخالها عبدالرحمن"),
+        Kid("rayan", "ريان", "10 سنين", R.drawable.face_rayan, 0xFF51CF66.toInt(), false, false, "أخته ليان، وخاله عبدالرحمن"),
+        Kid("abdulrahman", "عبدالرحمن", "14 سنة", R.drawable.face_abdulrahman, 0xFFFF922B.toInt(), false, false, "عم أيان، وخال ريان وليان"),
     )
 
     fun byId(id: String): Kid = kids.first { it.id == id }
@@ -124,10 +123,6 @@ class Store(ctx: Context) {
     var pin: String?
         get() = prefs.getString("pin", null)
         set(v) { prefs.edit().putString("pin", v).apply() }
-
-    var githubToken: String
-        get() = prefs.getString("gh_token", "") ?: ""
-        set(v) { prefs.edit().putString("gh_token", v.trim()).apply() }
 
     var skippedVersion: String
         get() = prefs.getString("skip_ver", "") ?: ""

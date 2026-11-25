@@ -50,6 +50,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         store = Store(this)
         store.pruneOldChoreRequests()
         tts = TextToSpeech(this, this)
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 7)
+        }
         showHome()
         checkForUpdate(manual = false)
     }
@@ -262,7 +266,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     /** الشخصية: صورة الجسم، وحجمها حسب العمر */
-    private fun character(kid: Kid, scale: Float): ImageView {
+    private fun character(kid: Kid, scale: Float): CharacterView {
         val h = when (kid.id) {
             "ayan" -> 95
             "layan" -> 120
@@ -270,11 +274,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             else -> 150
         }
         val px = (dp(h) * scale).toInt()
-        return ImageView(this).apply {
-            setImageResource(kid.bodyRes)
-            scaleType = ImageView.ScaleType.FIT_END
-            adjustViewBounds = true
-            layoutParams = LinearLayout.LayoutParams(WRAP, px).apply { setMargins(dp(2), 0, dp(2), 0) }
+        return CharacterView(this, kid).apply {
+            layoutParams = LinearLayout.LayoutParams((px * 0.62f).toInt(), px).apply { setMargins(dp(2), 0, dp(2), 0) }
             setOnClickListener { onCharacterTap(kid, this) }
             setOnLongClickListener { showKid(kid); true }
         }
@@ -311,10 +312,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val o = IntArray(2); ov.getLocationInWindow(o)
         val a = IntArray(2); from.getLocationInWindow(a)
         val b = IntArray(2); target.getLocationInWindow(b)
-        val walker = ImageView(this).apply {
-            setImageResource(kid.bodyRes)
-            scaleType = ImageView.ScaleType.FIT_END
-        }
+        val walker = CharacterView(this, kid).apply { walking = true }
         ov.addView(walker, FrameLayout.LayoutParams(from.width, from.height))
         walker.x = (a[0] - o[0]).toFloat()
         walker.y = (a[1] - o[1]).toFloat()
@@ -420,6 +418,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
             val here = Family.kids.filter { store.kidRoom(it.id) == room.id }
             val tasks = here.flatMap { k -> store.chores(k.id).filter { it.room == room.id }.map { k to it } }
+            val drags = tasks.filter { (k, ch) -> store.taskState(k.id, ch.id) == TaskState.TODO }
+                .mapNotNull { (k, ch) -> RoomItems.dragFor(k, ch, room.id) }
 
             val strip = android.widget.HorizontalScrollView(this)
             val row = hbox().apply { setPadding(dp(8), 0, dp(8), 0) }
@@ -431,18 +431,16 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             }
             root.addView(strip, lp(MATCH, WRAP))
 
-            root.addView(View(this), lp(MATCH, 0, 1f))
-            val floor = hbox().apply { gravity = Gravity.CENTER or Gravity.BOTTOM }
-            for (kid in here) {
-                val v = character(kid, 1.7f)
-                v.setOnClickListener {
-                    val lines = Talk.solo(kid, room.id)
-                    bubble(v, lines.random())
-                }
-                charViews[kid.id] = v
-                floor.addView(v)
-            }
-            root.addView(floor, lp(MATCH, WRAP).apply { bottomMargin = dp(10) })
+            val scene = RoomScene(
+                this, room.id, here, drags,
+                onTaskDone = { dt -> finishChore(room, dt.kid, dt.chore) },
+                say = { v, s -> bubble(v, s) },
+                speak = { speak(it) },
+                onKidTap = { kid, v -> bubble(v, Talk.solo(kid, room.id).random()) },
+            )
+            root.addView(scene, lp(MATCH, 0, 1f).apply { bottomMargin = dp(6) })
+            scene.post { charViews.putAll(scene.chars) }
+            main.postDelayed({ charViews.putAll(scene.chars) }, 400)
         }
         if (Family.kids.any { store.kidRoom(it.id) == room.id }) startTalk()
     }
@@ -474,16 +472,30 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         when (state) {
             TaskState.PENDING -> tile.addView(text("⏳", 28f).apply { gravity = Gravity.CENTER }, lp(MATCH, WRAP))
             TaskState.DONE -> tile.addView(text("✅", 28f).apply { gravity = Gravity.CENTER }, lp(MATCH, WRAP))
-            TaskState.TODO -> tile.addView(button(if (kid.toddler) "👍" else "خلّصت!", green, if (kid.toddler) 28f else 17f) {
-                store.setTaskState(kid.id, ch.id, TaskState.PENDING)
-                store.addRequest(Request(store.newRequestId(), kid.id, "chore", ch.id, ch.title, ch.points))
-                cheerSound()
-                speak(if (kid.toddler) "شاطر يا ${kid.name}!" else "أحسنت يا ${kid.name}! بانتظار اعتماد الأهل")
-                celebrate(kid) { showRoom(room) }
-            }, lp(MATCH, WRAP, margin = dp(2)))
+            TaskState.TODO -> {
+                val dt = RoomItems.dragFor(kid, ch, room.id)
+                if (dt != null) {
+                    tile.addView(text("${dt.obj} ➜ ${dt.target.emoji}", 26f).apply { gravity = Gravity.CENTER }, lp(MATCH, WRAP))
+                    if (!kid.toddler) tile.addView(text("اسحبها لـ${dt.target.name}", 14f, gray, true).apply { gravity = Gravity.CENTER }, lp(MATCH, WRAP))
+                    tile.setOnClickListener { speak("${ch.title}. اسحبها إلى ${dt.target.name}") }
+                } else {
+                    tile.addView(button(if (kid.toddler) "👍" else "خلّصت!", green, if (kid.toddler) 28f else 17f) {
+                        finishChore(room, kid, ch)
+                    }, lp(MATCH, WRAP, margin = dp(2)))
+                }
+            }
         }
         if (kid.autoSpeak) tile.setOnLongClickListener { speak(ch.title); true }
         return tile
+    }
+
+    private fun finishChore(room: Room, kid: Kid, ch: Chore) {
+        if (store.taskState(kid.id, ch.id) != TaskState.TODO) return
+        store.setTaskState(kid.id, ch.id, TaskState.PENDING)
+        store.addRequest(Request(store.newRequestId(), kid.id, "chore", ch.id, ch.title, ch.points))
+        cheerSound()
+        speak(if (kid.toddler) "شاطر يا ${kid.name}!" else "أحسنت يا ${kid.name}! بانتظار اعتماد الأهل")
+        celebrate(kid) { showRoom(room) }
     }
 
     private fun progress(done: Int, total: Int, color: Int): ProgressBar =
@@ -514,11 +526,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 background = rounded(Color.WHITE, dp(28).toFloat(), dp(3), kid.color)
                 setPadding(dp(16), dp(12), dp(16), dp(12))
             }
-            head.addView(ImageView(this).apply {
-                setImageResource(kid.bodyRes)
-                adjustViewBounds = true
-                scaleType = ImageView.ScaleType.FIT_CENTER
-            }, LinearLayout.LayoutParams(WRAP, dp(170)))
+            head.addView(CharacterView(this, kid), LinearLayout.LayoutParams(dp(110), dp(170)))
             val info = vbox().apply { setPadding(dp(16), 0, dp(16), 0) }
             info.addView(text("⭐ ${store.points(kid.id)}", 34f, kid.color, true))
             info.addView(text("🏅 المستوى ${store.level(kid.id)}", 22f, 0xFF495057.toInt(), true))
@@ -592,12 +600,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             t.animate().translationY(-h * 0.2f - (i % 5) * 60f).rotation(360f).alpha(0.2f)
                 .setStartDelay((i * 30).toLong()).setDuration(1100).start()
         }
-        val big = ImageView(this).apply {
-            setImageResource(kid.bodyRes)
+        val big = CharacterView(this, kid).apply {
             scaleX = 0.2f
             scaleY = 0.2f
         }
-        layer.addView(big, FrameLayout.LayoutParams(dp(300), dp(300), Gravity.CENTER))
+        layer.addView(big, FrameLayout.LayoutParams(dp(190), dp(300), Gravity.CENTER))
         big.animate().scaleX(1f).scaleY(1f).setDuration(500).start()
         main.postDelayed({
             root.removeView(layer)
@@ -695,7 +702,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             c.addView(button("🎁 تعديل المكافآت", orange) { editRewards() }, lp(MATCH, WRAP, margin = dp(4)))
             c.addView(button("➕➖ تعديل النقاط يدويًا", blue) { adjustPoints() }, lp(MATCH, WRAP, margin = dp(4)))
             c.addView(button("🔑 تغيير الرمز السري", gray) { changePin() }, lp(MATCH, WRAP, margin = dp(4)))
-            c.addView(button("🔄 التحقق من التحديثات", gray) { updateSettings() }, lp(MATCH, WRAP, margin = dp(4)))
+            c.addView(button("🔄 التحقق من التحديثات", gray) { checkForUpdate(manual = true) }, lp(MATCH, WRAP, margin = dp(4)))
             c.addView(button("ℹ️ حول التطبيق", gray) { showAbout() }, lp(MATCH, WRAP, margin = dp(4)))
             c.addView(button("🗑️ تصفير النقاط", red) { resetAll() }, lp(MATCH, WRAP, margin = dp(4)))
         }
@@ -871,27 +878,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         if (android.os.Build.VERSION.SDK_INT >= 28) pi.longVersionCode else @Suppress("DEPRECATION") pi.versionCode.toLong()
     } catch (_: Exception) { 0L }
 
-    private fun updateSettings() {
-        val box = vbox().apply { setPadding(dp(20), dp(8), dp(20), dp(8)) }
-        box.addView(text("المستودع خاص، لذلك يحتاج التحقق من التحديثات رمز GitHub للقراءة فقط (Fine-grained token بصلاحية Contents: Read على مستودع home-heroes).", 15f))
-        val input = EditText(this).apply {
-            hint = "github_pat_..."
-            setText(store.githubToken)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-        }
-        box.addView(input)
-        AlertDialog.Builder(this).setTitle("التحديثات").setView(box)
-            .setPositiveButton("حفظ وتحقق") { _, _ ->
-                store.githubToken = input.text.toString()
-                checkForUpdate(manual = true)
-            }.setNegativeButton("إلغاء", null).show()
-    }
-
     private fun checkForUpdate(manual: Boolean) {
-        val token = store.githubToken
-        if (token.isBlank() && !manual) return
         Thread {
-            val (info, err) = Updater.fetchLatest(token)
+            val (info, err) = Updater.fetchLatest()
             main.post {
                 if (isFinishing) return@post
                 if (info == null) {
@@ -904,17 +893,71 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     return@post
                 }
                 if (!manual && store.skippedVersion == info.version) return@post
+                if (!manual) notifyUpdate(info)
                 AlertDialog.Builder(this)
                     .setTitle("تحديث جديد متوفر")
                     .setMessage("الإصدار ${info.version}\n\nما الجديد:\n${info.notes}")
                     .setNegativeButton("لاحقًا") { _, _ -> store.skippedVersion = info.version }
-                    .setPositiveButton("تحديث") { _, _ ->
-                        try {
-                            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(info.url)))
-                        } catch (_: Exception) {
-                            toast("لا يوجد متصفح لفتح الرابط")
-                        }
-                    }.show()
+                    .setPositiveButton("تحديث") { _, _ -> startUpdate(info) }
+                    .show()
+            }
+        }.start()
+    }
+
+    /** إشعار في شريط الإشعارات عند توفر إصدار جديد */
+    private fun notifyUpdate(info: ReleaseInfo) {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) return
+            val nm = getSystemService(android.app.NotificationManager::class.java) ?: return
+            nm.createNotificationChannel(android.app.NotificationChannel("updates", "التحديثات", android.app.NotificationManager.IMPORTANCE_DEFAULT))
+            val open = android.app.PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
+                android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+            val n = android.app.Notification.Builder(this, "updates")
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle("تحديث جديد متوفر")
+                .setContentText("أبطال البيت ${info.version}")
+                .setContentIntent(open)
+                .setAutoCancel(true)
+                .build()
+            nm.notify(1, n)
+        } catch (_: Exception) {
+        }
+    }
+
+    /** تنزيل التحديث وفتح شاشة التثبيت من داخل التطبيق */
+    private fun startUpdate(info: ReleaseInfo) {
+        val apkUrl = info.apkUrl
+        if (apkUrl == null) {
+            toast("لا يحتوي الإصدار على ملف APK")
+            return
+        }
+        if (!packageManager.canRequestPackageInstalls()) {
+            toast("اسمح للتطبيق بتثبيت التحديثات، ثم اضغط «تحديث» مرة ثانية")
+            try {
+                startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+            } catch (_: Exception) {
+            }
+            return
+        }
+        val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
+        val label = text("جاري التنزيل… 0%", 16f)
+        val box = vbox().apply { setPadding(dp(20), dp(12), dp(20), dp(12)) }
+        box.addView(label)
+        box.addView(bar, lp(MATCH, WRAP))
+        val dlg = AlertDialog.Builder(this).setTitle("تحديث ${info.version}").setView(box).setCancelable(false).show()
+        Thread {
+            try {
+                val file = Updater.download(this, apkUrl) { p -> main.post { bar.progress = p; label.text = "جاري التنزيل… $p%" } }
+                main.post {
+                    dlg.dismiss()
+                    try { Updater.install(this, file) } catch (e: Exception) { toast("فشل التثبيت: ${e.message}") }
+                }
+            } catch (e: Exception) {
+                main.post {
+                    dlg.dismiss()
+                    toast("فشل التنزيل: ${e.message ?: e.javaClass.simpleName}")
+                }
             }
         }.start()
     }
