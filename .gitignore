@@ -3,3 +3,5 @@ build/
 local.properties
 *.p12
 *.jks
+ios/build/
+ios/HomeHeroes.xcodeproj/
