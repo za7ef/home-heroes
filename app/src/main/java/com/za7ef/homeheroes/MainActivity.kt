@@ -66,7 +66,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     override fun onResume() {
         super.onResume()
         sound?.startMusic()
-        if (overlay != null && charViews.isNotEmpty()) startTalk()
     }
 
     override fun onPause() {
@@ -238,7 +237,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             root.addView(bar, lp(MATCH, WRAP, margin = dp(8)))
         }
         selectedKid = null
-        startTalk()
     }
 
     private fun todoCount(roomId: String, kidId: String?): Int {
@@ -372,35 +370,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         main.postDelayed({ t.animate().alpha(0f).setDuration(200).withEndAction { ov.removeView(t) }.start() }, ms)
     }
 
-    /** كل شوي الأطفال يسولفون مع بعض حسب مين في نفس الغرفة */
-    private fun startTalk() {
-        stopTalk()
-        val r = object : Runnable {
-            override fun run() {
-                talkOnce()
-                main.postDelayed(this, 7000)
-            }
-        }
-        talkLoop = r
-        main.postDelayed(r, 2500)
-    }
-
-    private fun talkOnce() {
-        val together = Talk.convos.filter {
-            charViews.containsKey(it.a) && charViews.containsKey(it.b) && store.kidRoom(it.a) == store.kidRoom(it.b)
-        }
-        if (together.isNotEmpty() && Math.random() < 0.75) {
-            val c = together.random()
-            val va = charViews[c.a] ?: return
-            bubble(va, c.lineA)
-            main.postDelayed({ charViews[c.b]?.let { bubble(it, c.lineB) } }, 2200)
-        } else {
-            val kid = Family.kids.filter { charViews.containsKey(it.id) }.randomOrNull() ?: return
-            val v = charViews[kid.id] ?: return
-            bubble(v, Talk.solo(kid, store.kidRoom(kid.id)).random())
-        }
-    }
-
     // ---------------- داخل الغرفة ----------------
 
     private fun showRoom(room: Room) {
@@ -457,7 +426,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             root.addView(strip, lp(MATCH, WRAP))
 
         }
-        if (Family.kids.any { store.kidRoom(it.id) == room.id }) startTalk()
     }
 
     private fun note(s: String): TextView = text(s, 22f, 0xFF212529.toInt(), true).apply {

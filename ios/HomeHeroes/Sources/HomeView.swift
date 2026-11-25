@@ -64,12 +64,13 @@ struct HomeView: View {
                         roomCard(Rooms.all[i + 1])
                     }
                 }
-            }.padding(.horizontal, 8)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, 8)
             familyBar
         }
         .onAppear {
             if store.checkFamilyBonus() { nav.flash("🎉 العيلة كلها فازت بتحدي اليوم! +10 لكل واحد") }
-            chat.start(visible: { Family.kids }, roomOf: { store.kidRoom($0) })
         }
         .onDisappear { chat.stop() }
     }
@@ -101,8 +102,10 @@ struct HomeView: View {
 
     private func roomCard(_ room: Room) -> some View {
         ZStack(alignment: .topTrailing) {
-            Image(uiImage: image(room.bg)).resizable().scaledToFill()
-                .frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
+            // الخلفية لا تتحكم في حجم البطاقة: حجم البطاقة يحدده التخطيط، والصورة تملأها وتُقص
+            Color.clear
+                .overlay(Image(uiImage: image(room.bg)).resizable().scaledToFill())
+                .clipped()
             let n = todo(room.id)
             Text("\(room.emoji) \(room.name)" + (n > 0 ? "  ⭐\(n)" : ""))
                 .font(.system(size: 16, weight: .bold)).foregroundColor(.white)
@@ -117,6 +120,7 @@ struct HomeView: View {
                 }.padding(.bottom, 6)
             }.frame(maxWidth: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.white)
         .clipShape(RoundedRectangle(cornerRadius: 18))
         .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color(hex: 0x8D5524), lineWidth: 4))

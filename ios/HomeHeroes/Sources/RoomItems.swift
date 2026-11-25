@@ -18,7 +18,7 @@ enum RoomItems {
             Target(id: "desk", emoji: "🪑", name: "المكتب", fx: 0.38, fy: 0.50),
             Target(id: "wardrobe", emoji: "🚪", name: "الدولاب", fx: 0.58, fy: 0.52),
             Target(id: "basket", emoji: "🧺", name: "سلة الملابس", fx: 0.71, fy: 0.62)])
-        case "kitchen": return RoomArt(iw: 1280, ih: 734, floorTop: 0.85, wall: Color(hex: 0xF6B73C), targets: [
+        case "kitchen": return RoomArt(iw: 1367, ih: 784, floorTop: 0.85, wall: Color(hex: 0xF6B73C), targets: [
             Target(id: "sink", emoji: "🚰", name: "المغسلة", fx: 0.64, fy: 0.50),
             Target(id: "cupboard", emoji: "🗄️", name: "الدولاب", fx: 0.80, fy: 0.66),
             Target(id: "bin", emoji: "🗑️", name: "الزبالة", fx: 0.93, fy: 0.90, prop: true)])

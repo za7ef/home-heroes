@@ -285,7 +285,6 @@ struct SceneArea: View {
             feet[k.id] = CGPoint(x: s.width * CGFloat(idx + 1) / CGFloat(kids.count + 1), y: s.height - 4)
         }
         selected = kids.first?.id
-        chat.start(visible: { kids }, roomOf: { _ in room.id })
     }
 
     private func clampFoot(_ id: String, _ p: CGPoint) -> CGPoint {

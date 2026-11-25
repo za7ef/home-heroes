@@ -39,7 +39,7 @@ object RoomItems {
             Target("wardrobe", "🚪", "الدولاب", 0.58f, 0.52f),
             Target("basket", "🧺", "سلة الملابس", 0.71f, 0.62f),
         ))
-        "kitchen" -> RoomArt(1280f, 734f, 0.85f, 0xFFF6B73C.toInt(), listOf(
+        "kitchen" -> RoomArt(1367f, 784f, 0.85f, 0xFFF6B73C.toInt(), listOf(
             Target("sink", "🚰", "المغسلة", 0.64f, 0.50f),
             Target("cupboard", "🗄️", "الدولاب", 0.80f, 0.66f),
             Target("bin", "🗑️", "الزبالة", 0.93f, 0.90f, prop = true),
