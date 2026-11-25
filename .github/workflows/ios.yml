@@ -1,0 +1,64 @@
+name: iOS
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach the IPA to (optional)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: XcodeGen
+        run: brew install xcodegen
+
+      - name: Build
+        working-directory: ios
+        run: |
+          xcodegen generate
+          xcodebuild -project HomeHeroes.xcodeproj -scheme HomeHeroes -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build | tail -60
+          test -d build/Build/Products/Release-iphoneos/HomeHeroes.app
+
+      - name: IPA
+        id: ver
+        run: |
+          VN=$(grep -oE 'MARKETING_VERSION: "[^"]+"' ios/project.yml | grep -oE '[0-9.]+')
+          VC=$(grep -oE 'CURRENT_PROJECT_VERSION: "[^"]+"' ios/project.yml | grep -oE '[0-9]+')
+          mkdir Payload
+          cp -R ios/build/Build/Products/Release-iphoneos/HomeHeroes.app Payload/
+          zip -qry "HomeHeroes-$VN-build$VC.ipa" Payload
+          echo "vn=$VN" >> "$GITHUB_OUTPUT"
+          echo "vc=$VC" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HomeHeroes-iOS-${{ steps.ver.outputs.vn }}-build${{ steps.ver.outputs.vc }}
+          path: HomeHeroes-*.ipa
+
+      - name: Release
+        if: inputs.tag != '' || startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          GITHUB_REF_NAME="$TAG"
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 && break
+            sleep 30
+          done
+          gh release upload "${GITHUB_REF_NAME}" HomeHeroes-*.ipa --clobber
