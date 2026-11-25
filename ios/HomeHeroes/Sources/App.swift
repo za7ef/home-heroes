@@ -39,7 +39,7 @@ struct HomeHeroesApp: App {
                 .environmentObject(store)
                 .environmentObject(nav)
                 .environment(\.layoutDirection, .rightToLeft)
-                .onAppear { store.pruneOld() }
+                .onAppear { store.pruneOld(); Sound.shared.startMusic() }
         }
     }
 }
@@ -141,7 +141,7 @@ struct Btn: View {
     }
 
     var body: some View {
-        Button(action: action) {
+        Button(action: { Sound.shared.tap(); action() }) {
             Text(label).font(.system(size: size, weight: .bold)).foregroundColor(.white)
                 .padding(.horizontal, 16).padding(.vertical, 9)
                 .frame(maxWidth: full ? .infinity : nil)

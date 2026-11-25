@@ -181,6 +181,7 @@ struct ParentView: View {
             Text("الإعدادات").font(.system(size: 22, weight: .bold)).foregroundColor(orange).padding(.top, 14)
             ForEach(Family.kids) { kid in Btn("✏️ مهام \(kid.name)", kid.color, full: true) { nav.show(.editChores(kid.id)) } }
             Btn("🎁 تعديل المكافآت", orange, full: true) { nav.show(.editRewards) }
+            MusicToggle()
             Menu {
                 ForEach(Family.kids) { kid in Button("\(kid.name) (⭐ \(store.points(kid.id)))") { delta = ""; pointsKid = kid } }
             } label: {
@@ -374,5 +375,18 @@ struct TextPage: View {
     init(title: String, body: String) { self.title = title; self.body_ = body }
     var body: some View {
         Page(title: title, back: .about) { Text(body_).font(.system(size: 18)).lineSpacing(6) }
+    }
+}
+
+/** تشغيل أو إيقاف موسيقى الخلفية (أصوات الضغط والنجاح تبقى) */
+struct MusicToggle: View {
+    @State private var on = Sound.shared.musicOn
+    var body: some View {
+        Toggle(isOn: $on) {
+            Text("🎵 موسيقى الخلفية").font(.system(size: 20, weight: .bold))
+        }
+        .padding(.horizontal, 16).padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: 18).fill(Color.white))
+        .onChange(of: on) { v in Sound.shared.musicOn = v }
     }
 }

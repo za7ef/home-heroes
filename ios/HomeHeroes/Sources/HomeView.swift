@@ -124,7 +124,7 @@ struct HomeView: View {
         .onTapGesture {
             if let sel = selected, store.kidRoom(sel) != room.id {
                 let kid = Family.byId(sel)
-                Speaker.shared.say(kid.toddler ? "يلا!" : "رايح \(room.name)")
+                Speaker.shared.say(kid.toddler ? "يلا!" : "رايح \(room.name)", as: kid.id)
                 walkingKid = sel
                 withAnimation(.easeInOut(duration: 1.2)) { store.setKidRoom(sel, room.id) }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.25) { walkingKid = nil }

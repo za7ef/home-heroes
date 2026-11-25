@@ -40,7 +40,7 @@ fun Context.button(label: String, color: Int, sizeSp: Float = 20f, onClick: () -
         setTypeface(typeface, Typeface.BOLD)
         background = rounded(color, dp(18).toFloat())
         setPadding(dp(18), dp(10), dp(18), dp(10))
-        setOnClickListener { onClick() }
+        setOnClickListener { Sound.current?.tap(); onClick() }
     }
 
 fun Context.vbox(): LinearLayout = LinearLayout(this).apply {

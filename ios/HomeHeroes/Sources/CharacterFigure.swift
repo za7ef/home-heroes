@@ -1,20 +1,23 @@
 import SwiftUI
 
-struct Outfit {
-    let shirt: Color, trim: Color, pants: Color
-    let shortSleeves: Bool, shorts: Bool, stripes: Bool, hoodie: Bool
+/** أبعاد رسم الشخصية بالبكسل الأصلي: العرض، الارتفاع، ومستوى الورك (بداية الرجلين) */
+struct Rig {
+    let w: CGFloat, h: CGFloat, legY: CGFloat
 
-    static func of(_ id: String) -> Outfit {
+    static func of(_ id: String) -> Rig {
         switch id {
-        case "abdulrahman": return Outfit(shirt: Color(hex: 0xD9342B), trim: Color(hex: 0xA8231C), pants: Color(hex: 0x2F3E5C), shortSleeves: true, shorts: false, stripes: false, hoodie: false)
-        case "rayan": return Outfit(shirt: Color(hex: 0xF7F3EA), trim: Color(hex: 0xCFC6B4), pants: Color(hex: 0x6B5B4B), shortSleeves: true, shorts: false, stripes: false, hoodie: false)
-        case "layan": return Outfit(shirt: Color(hex: 0x4F8FD0), trim: .white, pants: Color(hex: 0x8E6BB8), shortSleeves: false, shorts: false, stripes: false, hoodie: true)
-        default: return Outfit(shirt: Color(hex: 0xDCEBFA), trim: Color(hex: 0x5C8FD6), pants: Color(hex: 0x3B6FB6), shortSleeves: true, shorts: true, stripes: true, hoodie: false)
+        case "ayan": return Rig(w: 267, h: 640, legY: 475)
+        case "layan": return Rig(w: 235, h: 640, legY: 455)
+        case "rayan": return Rig(w: 232, h: 640, legY: 460)
+        default: return Rig(w: 235, h: 640, legY: 458)
         }
     }
 }
 
-/** شخصية كرتونية: الوجه من صورة الطفل، والجسم مرسوم ويتحرك أثناء المشي والحمل */
+/**
+ * شخصية مرسومة بأسلوب واحد: الوجه من الصورة المرجعية للطفل والجسم بنفس الأسلوب وبملابس الإصدار 1.0.
+ * الرجلان منفصلتان حتى تتحركا أثناء المشي، والجسم ينحني عند الالتقاط.
+ */
 struct CharacterFigure: View {
     let kid: Kid
     var walking: Bool = false
@@ -29,82 +32,40 @@ struct CharacterFigure: View {
     }
 
     private func draw(_ c: GraphicsContext, _ size: CGSize, _ t: CGFloat) {
-        let w = size.width, h = size.height
-        guard w > 0, h > 0 else { return }
-        let o = Outfit.of(kid.id)
-        let skin = Color(hex: 0xE7B48A), line = Color(hex: 0x3B2A20)
-        let sw = max(1.5, h * 0.012)
-        let headD = min(w * 0.92, h * (kid.toddler ? 0.5 : 0.42))
-        let legLen = h * (kid.toddler ? 0.17 : 0.23)
-        let footY = h - sw * 2
-        let bob = walking ? -abs(sin(t)) * h * 0.035 : sin(t) * h * 0.006
-        let hipY = footY - legLen + bob
-        let torsoH = (h - headD * 0.9 - legLen - sw * 2) + bend * h * 0.06
-        let shoulderY = hipY - torsoH + bend * h * 0.08
-        let cx = w / 2
-        let torsoW = headD * (kid.toddler ? 0.78 : 0.72)
-        let legW = torsoW * 0.32, armW = legW * 0.8
-        let swing = walking ? sin(t) : 0
+        let rig = Rig.of(kid.id)
+        guard size.width > 0, size.height > 0 else { return }
+        let s = min(size.height / rig.h, size.width / rig.w)
+        var g = c
+        g.translateBy(x: (size.width - rig.w * s) / 2, y: size.height - rig.h * s)
+        g.scaleBy(x: s, y: s)
+        let swing: CGFloat = walking ? sin(t) : 0
+        let bob: CGFloat = walking ? -abs(sin(t)) * rig.h * 0.02 : sin(t) * rig.h * 0.004
+        let legH = rig.h - rig.legY
 
-        // الأرجل
-        for side in [-1.0, 1.0] as [CGFloat] {
-            let lift = walking ? max(0, side * swing) * legLen * 0.22 : 0
-            let lx = cx + side * torsoW * 0.22
-            let top = hipY - sw, bottom = footY - lift
-            let pantsEnd = o.shorts ? top + (bottom - top) * 0.4 : bottom - legW * 0.3
-            if o.shorts {
-                let r = Path(roundedRect: CGRect(x: lx - legW / 2, y: top, width: legW, height: bottom - top), cornerRadius: legW / 2)
-                c.fill(r, with: .color(skin)); c.stroke(r, with: .color(line), lineWidth: sw)
-            }
-            let p = Path(roundedRect: CGRect(x: lx - legW / 2 - sw, y: top, width: legW + 2 * sw, height: pantsEnd - top), cornerRadius: legW / 3)
-            c.fill(p, with: .color(o.pants)); c.stroke(p, with: .color(line), lineWidth: sw)
-            c.fill(Path(ellipseIn: CGRect(x: lx - legW * 0.75, y: bottom - legW * 0.55, width: legW * 1.5, height: legW * 0.55 + sw)), with: .color(Color(hex: 0x343A40)))
+        // الرجلان: كل رجل ترتفع بالتناوب أثناء المشي
+        for (name, side) in [("legl", CGFloat(-1)), ("legr", CGFloat(1))] {
+            let x0: CGFloat = side < 0 ? 0 : rig.w / 2
+            let lift = walking ? max(0, side * swing) * legH * 0.16 : 0
+            var lg = g
+            lg.translateBy(x: x0 + rig.w / 4, y: rig.legY)
+            lg.rotate(by: .degrees(Double(swing * 5)))
+            lg.translateBy(x: -(x0 + rig.w / 4), y: -rig.legY)
+            lg.draw(lg.resolve(Image(uiImage: image("\(name)_\(kid.id).png")).resizable()),
+                    in: CGRect(x: x0, y: rig.legY - lift, width: rig.w / 2, height: legH))
         }
 
-        // الجسم
-        let torso = Path(roundedRect: CGRect(x: cx - torsoW / 2, y: shoulderY, width: torsoW, height: hipY + sw - shoulderY), cornerRadius: torsoW * 0.28)
-        c.fill(torso, with: .color(o.shirt))
-        if o.stripes {
-            var y = shoulderY + torsoH * 0.18
-            while y < hipY - sw {
-                c.fill(Path(CGRect(x: cx - torsoW / 2 + sw, y: y, width: torsoW - 2 * sw, height: torsoH * 0.06)), with: .color(o.trim))
-                y += torsoH * 0.18
-            }
-        }
-        if o.hoodie {
-            c.fill(Path(CGRect(x: cx - torsoW * 0.2, y: shoulderY, width: torsoW * 0.4, height: hipY - shoulderY)), with: .color(o.trim))
-        }
-        c.stroke(torso, with: .color(line), lineWidth: sw)
+        // الجسم والرأس: يهتز مع المشي، وينحني للأمام عند الالتقاط
+        var b = g
+        b.translateBy(x: 0, y: bob + bend * rig.h * 0.05)
+        b.translateBy(x: rig.w / 2, y: rig.legY)
+        b.rotate(by: .degrees(Double(bend * 10 + swing * 2)))
+        b.translateBy(x: -rig.w / 2, y: -rig.legY)
+        b.draw(b.resolve(Image(uiImage: image("body_\(kid.id).png")).resizable()),
+               in: CGRect(x: 0, y: 0, width: rig.w, height: rig.h))
 
-        // الأيدي
-        let armLen = torsoH * 0.9
-        let holding = carrying != nil
-        for side in [-1.0, 1.0] as [CGFloat] {
-            let sx = cx + side * (torsoW / 2 - armW * 0.2), sy = shoulderY + armW * 0.6
-            let ang: CGFloat = holding ? side * -0.95 : (walking ? side * 0.15 + swing * 0.55 * side : side * (0.12 + sin(t) * 0.03))
-            let ex = sx + sin(ang) * armLen * (holding ? 0.85 : 1)
-            let ey = sy + cos(ang) * armLen * (holding ? 0.7 : 1)
-            var arm = Path(); arm.move(to: CGPoint(x: sx, y: sy)); arm.addLine(to: CGPoint(x: ex, y: ey))
-            c.stroke(arm, with: .color(line), style: StrokeStyle(lineWidth: armW + sw * 2, lineCap: .round))
-            c.stroke(arm, with: .color(o.shortSleeves ? skin : o.shirt), style: StrokeStyle(lineWidth: armW, lineCap: .round))
-            if o.shortSleeves {
-                var sl = Path(); sl.move(to: CGPoint(x: sx, y: sy)); sl.addLine(to: CGPoint(x: sx + (ex - sx) * 0.3, y: sy + (ey - sy) * 0.3))
-                c.stroke(sl, with: .color(o.shirt), style: StrokeStyle(lineWidth: armW, lineCap: .round))
-            }
-            c.fill(Path(ellipseIn: CGRect(x: ex - armW * 0.62, y: ey - armW * 0.62, width: armW * 1.24, height: armW * 1.24)), with: .color(skin))
-        }
-
-        // الرأس
-        let headCy = shoulderY - headD * 0.42 + bend * h * 0.03
-        let hx = cx + (walking ? sin(t) * w * 0.01 : 0)
-        let ring = headD / 2 + sw * 1.6
-        c.fill(Path(ellipseIn: CGRect(x: hx - ring, y: headCy - ring, width: ring * 2, height: ring * 2)), with: .color(kid.color))
-        let img = c.resolve(Image(uiImage: image(kid.face)).resizable())
-        c.draw(img, in: CGRect(x: hx - headD / 2, y: headCy - headD / 2, width: headD, height: headD))
-
-        // الغرض المحمول
+        // الغرض المحمول أمام الصدر
         if let item = carrying {
-            c.draw(Text(item).font(.system(size: torsoW * 0.95)), at: CGPoint(x: cx, y: shoulderY + torsoH * 0.3))
+            b.draw(Text(item).font(.system(size: rig.w * 0.42)), at: CGPoint(x: rig.w / 2, y: rig.legY * 0.74))
         }
     }
 }

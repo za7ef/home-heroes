@@ -45,11 +45,16 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private val blue = 0xFF1C7ED6.toInt()
     private val red = 0xFFE03131.toInt()
 
+    private var sound: Sound? = null
+    private var voice: Voice? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = Store(this)
         store.pruneOldChoreRequests()
         tts = TextToSpeech(this, this)
+        sound = Sound(this).also { Sound.current = it }
+        voice = Voice(this)
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 7)
@@ -60,17 +65,22 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     override fun onResume() {
         super.onResume()
+        sound?.startMusic()
         if (overlay != null && charViews.isNotEmpty()) startTalk()
     }
 
     override fun onPause() {
         stopTalk()
+        sound?.pauseMusic()
         super.onPause()
     }
 
     override fun onDestroy() {
         stopTalk()
         tts?.shutdown()
+        sound?.release()
+        voice?.stop()
+        if (Sound.current === sound) Sound.current = null
         super.onDestroy()
     }
 
@@ -89,7 +99,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         tts?.setSpeechRate(0.9f)
     }
 
-    private fun speak(s: String) {
+    /** يشغّل الصوت المسجّل للعبارة إن وُجد (بصوت المتحدث who)، وإلا ينطقها محرك الجهاز */
+    private fun speak(s: String, who: String? = null) {
+        tts?.stop()
+        if (voice?.play(s, who) == true) return
+        voice?.stop()
         if (!ttsReady) {
             if (!ttsWarned) {
                 ttsWarned = true
@@ -116,7 +130,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         overlay = null
         charViews.clear()
         back = onBack
-        val root = vbox().apply { setBackgroundColor(bg) }
+        val root = vbox().apply { setBackgroundColor(bg); fitsSystemWindows = true }
         val bar = hbox().apply { setPadding(dp(16), dp(12), dp(16), dp(12)) }
         if (onBack != null) {
             bar.addView(button("→ رجوع", gray, 18f) { onBack() })
@@ -160,7 +174,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         stopTalk()
         back = onBack
         charViews.clear()
-        val frame = FrameLayout(this).apply { setBackgroundColor(bg) }
+        val frame = FrameLayout(this).apply {
+            setBackgroundColor(bg)
+            // يبقى المحتوى داخل المنطقة الآمنة (بعيد عن النوتش وأشرطة النظام)
+            fitsSystemWindows = true
+        }
         build(frame)
         val ov = FrameLayout(this)
         frame.addView(ov, FrameLayout.LayoutParams(MATCH, MATCH))
@@ -307,7 +325,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val from = charViews[kid.id]
         val target = houseRoomViews[to.id]
         store.setKidRoom(kid.id, to.id)
-        speak(if (kid.toddler) "يلا!" else "رايح ${to.name}")
+        speak(if (kid.toddler) "يلا!" else "رايح ${to.name}", kid.id)
         if (from == null || target == null) return then()
         val o = IntArray(2); ov.getLocationInWindow(o)
         val a = IntArray(2); from.getLocationInWindow(a)
@@ -387,10 +405,22 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     private fun showRoom(room: Room) {
         stage({ showHome() }) { frame ->
-            frame.addView(ImageView(this).apply {
-                setImageResource(room.bg)
-                scaleType = ImageView.ScaleType.CENTER_CROP
-            }, FrameLayout.LayoutParams(MATCH, MATCH))
+            val here = Family.kids.filter { store.kidRoom(it.id) == room.id }
+            val tasks = here.flatMap { k -> store.chores(k.id).filter { it.room == room.id }.map { k to it } }
+            val drags = tasks.filter { (k, ch) -> store.taskState(k.id, ch.id) == TaskState.TODO }
+                .mapNotNull { (k, ch) -> RoomItems.dragFor(k, ch, room.id) }
+
+            // المشهد بكامل الشاشة تحت الأزرار، والخلفية جزء منه حتى تتطابق الأماكن مع الرسم
+            val scene = RoomScene(
+                this, room.id, room.bg, here, drags,
+                onTaskDone = { dt -> finishChore(room, dt.kid, dt.chore) },
+                say = { v, s -> bubble(v, s) },
+                speak = { text, who -> speak(text, who) },
+                onKidTap = { kid, v -> val line = Talk.solo(kid, room.id).random(); bubble(v, line); speak(line, kid.id) },
+            )
+            frame.addView(scene, FrameLayout.LayoutParams(MATCH, MATCH))
+            scene.post { charViews.putAll(scene.chars) }
+            main.postDelayed({ charViews.putAll(scene.chars) }, 400)
 
             val root = vbox()
             frame.addView(root, FrameLayout.LayoutParams(MATCH, MATCH))
@@ -406,7 +436,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     setPadding(dp(4), dp(2), dp(10), dp(2))
                     setOnClickListener {
                         store.setKidRoom(kid.id, room.id)
-                        speak(if (kid.toddler) "جاي!" else "جاي!")
+                        speak("جاي!", kid.id)
                         showRoom(room)
                     }
                 }
@@ -416,31 +446,16 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             }
             root.addView(top, lp(MATCH, WRAP))
 
-            val here = Family.kids.filter { store.kidRoom(it.id) == room.id }
-            val tasks = here.flatMap { k -> store.chores(k.id).filter { it.room == room.id }.map { k to it } }
-            val drags = tasks.filter { (k, ch) -> store.taskState(k.id, ch.id) == TaskState.TODO }
-                .mapNotNull { (k, ch) -> RoomItems.dragFor(k, ch, room.id) }
-
             val strip = android.widget.HorizontalScrollView(this)
             val row = hbox().apply { setPadding(dp(8), 0, dp(8), 0) }
             strip.addView(row)
             when {
                 here.isEmpty() -> row.addView(note("ما فيه أحد هنا! اضغط «تعال» عشان تنادي أحد 👆"))
                 tasks.isEmpty() -> row.addView(note("ما فيه مهام هنا. جرّبوا غرفة ثانية! 🚪"))
-                else -> tasks.forEach { (k, ch) -> row.addView(roomTask(room, k, ch), lp(dp(if (k.toddler) 190 else 170), WRAP, margin = dp(6))) }
+                else -> tasks.forEach { (k, ch) -> row.addView(roomTask(room, k, ch), lp(WRAP, WRAP, margin = dp(4))) }
             }
             root.addView(strip, lp(MATCH, WRAP))
 
-            val scene = RoomScene(
-                this, room.id, here, drags,
-                onTaskDone = { dt -> finishChore(room, dt.kid, dt.chore) },
-                say = { v, s -> bubble(v, s) },
-                speak = { speak(it) },
-                onKidTap = { kid, v -> bubble(v, Talk.solo(kid, room.id).random()) },
-            )
-            root.addView(scene, lp(MATCH, 0, 1f).apply { bottomMargin = dp(6) })
-            scene.post { charViews.putAll(scene.chars) }
-            main.postDelayed({ charViews.putAll(scene.chars) }, 400)
         }
         if (Family.kids.any { store.kidRoom(it.id) == room.id }) startTalk()
     }
@@ -450,6 +465,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         setPadding(dp(16), dp(10), dp(16), dp(10))
     }
 
+    /** بطاقة مهمة مختصرة بسطر واحد حتى لا تغطي أثاث الغرفة */
     private fun roomTask(room: Room, kid: Kid, ch: Chore): View {
         val state = store.taskState(kid.id, ch.id)
         val tileColor = when (state) {
@@ -457,31 +473,30 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             TaskState.PENDING -> 0xF2FFF3BF.toInt()
             TaskState.DONE -> 0xF2D3F9D8.toInt()
         }
-        val tile = vbox().apply {
-            gravity = Gravity.CENTER_HORIZONTAL
+        val tile = hbox().apply {
+            gravity = Gravity.CENTER_VERTICAL
             background = rounded(tileColor, dp(22).toFloat(), dp(3), kid.color)
-            setPadding(dp(8), dp(8), dp(8), dp(8))
+            setPadding(dp(4), dp(3), dp(10), dp(3))
             setOnClickListener { speak(ch.title) }
         }
-        val head = hbox().apply { gravity = Gravity.CENTER }
-        head.addView(avatar(kid, 36))
-        head.addView(text(" ${ch.emoji}", if (kid.toddler) 46f else 36f))
-        tile.addView(head, lp(MATCH, WRAP))
-        tile.addView(text(ch.title, if (kid.autoSpeak) 18f else 16f, 0xFF212529.toInt(), true).apply { gravity = Gravity.CENTER }, lp(MATCH, WRAP))
-        if (!kid.toddler) tile.addView(text("⭐ ${ch.points}", 15f, kid.color, true).apply { gravity = Gravity.CENTER }, lp(MATCH, WRAP))
+        tile.addView(avatar(kid, 34))
+        tile.addView(text(" ${ch.emoji} ", if (kid.toddler) 30f else 24f))
+        val info = vbox()
+        info.addView(text(ch.title, 15f, 0xFF212529.toInt(), true).apply { maxLines = 1 })
+        if (!kid.toddler) info.addView(text("⭐ ${ch.points}", 13f, kid.color, true))
+        tile.addView(info, lp(WRAP, WRAP))
         when (state) {
-            TaskState.PENDING -> tile.addView(text("⏳", 28f).apply { gravity = Gravity.CENTER }, lp(MATCH, WRAP))
-            TaskState.DONE -> tile.addView(text("✅", 28f).apply { gravity = Gravity.CENTER }, lp(MATCH, WRAP))
+            TaskState.PENDING -> tile.addView(text("  ⏳", 22f))
+            TaskState.DONE -> tile.addView(text("  ✅", 22f))
             TaskState.TODO -> {
                 val dt = RoomItems.dragFor(kid, ch, room.id)
                 if (dt != null) {
-                    tile.addView(text("${dt.obj} ➜ ${dt.target.emoji}", 26f).apply { gravity = Gravity.CENTER }, lp(MATCH, WRAP))
-                    if (!kid.toddler) tile.addView(text("اسحبها لـ${dt.target.name}", 14f, gray, true).apply { gravity = Gravity.CENTER }, lp(MATCH, WRAP))
+                    tile.addView(text("  ${dt.obj}➜${dt.target.emoji}", 22f))
                     tile.setOnClickListener { speak("${ch.title}. اسحبها إلى ${dt.target.name}") }
                 } else {
-                    tile.addView(button(if (kid.toddler) "👍" else "خلّصت!", green, if (kid.toddler) 28f else 17f) {
+                    tile.addView(button(if (kid.toddler) "👍" else "خلّصت!", green, if (kid.toddler) 22f else 15f) {
                         finishChore(room, kid, ch)
-                    }, lp(MATCH, WRAP, margin = dp(2)))
+                    }, lp(WRAP, WRAP, margin = dp(2)))
                 }
             }
         }
@@ -493,7 +508,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         if (store.taskState(kid.id, ch.id) != TaskState.TODO) return
         store.setTaskState(kid.id, ch.id, TaskState.PENDING)
         store.addRequest(Request(store.newRequestId(), kid.id, "chore", ch.id, ch.title, ch.points))
-        cheerSound()
+        sound?.success()
         speak(if (kid.toddler) "شاطر يا ${kid.name}!" else "أحسنت يا ${kid.name}! بانتظار اعتماد الأهل")
         celebrate(kid) { showRoom(room) }
     }
@@ -701,6 +716,15 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             }
             c.addView(button("🎁 تعديل المكافآت", orange) { editRewards() }, lp(MATCH, WRAP, margin = dp(4)))
             c.addView(button("➕➖ تعديل النقاط يدويًا", blue) { adjustPoints() }, lp(MATCH, WRAP, margin = dp(4)))
+            c.addView(android.widget.Switch(this).apply {
+                text = "🎵 موسيقى الخلفية"
+                textSize = 20f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                isChecked = sound?.musicOn ?: true
+                background = rounded(Color.WHITE, dp(18).toFloat())
+                setPadding(dp(16), dp(10), dp(16), dp(10))
+                setOnCheckedChangeListener { _, on -> sound?.musicOn = on }
+            }, lp(MATCH, WRAP, margin = dp(4)))
             c.addView(button("🔑 تغيير الرمز السري", gray) { changePin() }, lp(MATCH, WRAP, margin = dp(4)))
             c.addView(button("🔄 التحقق من التحديثات", gray) { checkForUpdate(manual = true) }, lp(MATCH, WRAP, margin = dp(4)))
             c.addView(button("ℹ️ حول التطبيق", gray) { showAbout() }, lp(MATCH, WRAP, margin = dp(4)))
