@@ -66,6 +66,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     override fun onResume() {
         super.onResume()
         sound?.startMusic()
+        if (overlay != null && charViews.isNotEmpty()) startTalk()
     }
 
     override fun onPause() {
@@ -161,11 +162,15 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private val charViews = mutableMapOf<String, View>()
     private var overlay: FrameLayout? = null
     private var talkLoop: Runnable? = null
+    private var talkBusyUntil = 0L
+    private var talkGen = 0
     private var houseRoomViews = mutableMapOf<String, FrameLayout>()
 
     private fun stopTalk() {
         talkLoop?.let { main.removeCallbacks(it) }
         talkLoop = null
+        talkGen++
+        talkBusyUntil = 0L
     }
 
     /** يبني شاشة كاملة بدون تمرير، مع طبقة علوية للفقاعات والحركة */
@@ -237,6 +242,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             root.addView(bar, lp(MATCH, WRAP, margin = dp(8)))
         }
         selectedKid = null
+        startTalk()
     }
 
     private fun todoCount(roomId: String, kidId: String?): Int {
@@ -370,6 +376,40 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         main.postDelayed({ t.animate().alpha(0f).setDuration(200).withEndAction { ov.removeView(t) }.start() }, ms)
     }
 
+    /** كل شوي الأطفال يسولفون مع بعض حسب مين في نفس الغرفة */
+    private fun startTalk() {
+        stopTalk()
+        val r = object : Runnable {
+            override fun run() {
+                talkOnce()
+                main.postDelayed(this, 7000)
+            }
+        }
+        talkLoop = r
+        main.postDelayed(r, 2500)
+    }
+
+    private fun talkOnce() {
+        val together = Talk.convos.filter {
+            charViews.containsKey(it.a) && charViews.containsKey(it.b) && store.kidRoom(it.a) == store.kidRoom(it.b)
+        }
+        if (System.currentTimeMillis() < talkBusyUntil) return
+        if (together.isNotEmpty() && Math.random() < 0.75) {
+            // حوار متناوب: كل سطر بعد اللي قبله، ولا يبدأ حوار جديد قبل نهايته
+            val c = together.random()
+            val gen = talkGen
+            c.lines.forEachIndexed { i, line ->
+                main.postDelayed({ if (gen == talkGen) charViews[c.speaker(i)]?.let { bubble(it, line); speak(line, c.speaker(i)) } }, i * 2600L)
+            }
+            talkBusyUntil = System.currentTimeMillis() + c.lines.size * 2600L + 500
+        } else {
+            val kid = Family.kids.filter { charViews.containsKey(it.id) }.randomOrNull() ?: return
+            val v = charViews[kid.id] ?: return
+            val line = Talk.solo(kid, store.kidRoom(kid.id)).random()
+            bubble(v, line); speak(line, kid.id)
+        }
+    }
+
     // ---------------- داخل الغرفة ----------------
 
     private fun showRoom(room: Room) {
@@ -426,6 +466,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             root.addView(strip, lp(MATCH, WRAP))
 
         }
+        if (Family.kids.any { store.kidRoom(it.id) == room.id }) startTalk()
     }
 
     private fun note(s: String): TextView = text(s, 22f, 0xFF212529.toInt(), true).apply {

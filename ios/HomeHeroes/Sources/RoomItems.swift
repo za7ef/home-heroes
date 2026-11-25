@@ -35,10 +35,10 @@ enum RoomItems {
 
     static func decor(_ room: String) -> [String] {
         switch room {
-        case "kitchen": return ["🍎", "🥤"]
-        case "bedroom": return ["📕", "🎈"]
-        case "bath": return ["🦆", "🧴"]
-        default: return ["⚽", "🪀"]
+        case "kitchen": return ["🍎", "🍌", "🥄", "🧃"]
+        case "bedroom": return ["📕", "🎈", "🧩", "🖍️"]
+        case "bath": return ["🦆", "🧽", "🪮", "🫧"]
+        default: return ["🪀", "🚗", "🎲", "🪁"]
         }
     }
 
@@ -47,6 +47,7 @@ enum RoomItems {
             "👕": ("👕", "basket"), "🧸": ("🧸", "toybox"), "🧺": ("👚", "wardrobe"), "👟": ("👟", "shoes"),
             "🍽️": ("🍽️", "sink"), "🗑️": ("🛍️", "bin"), "🛒": ("🥫", "cupboard"), "🎒": ("🎒", "desk"),
             "🛏️": ("🧣", "bed"), "🪥": ("🪥", "sink"), "🧼": ("🧼", "sink"), "🧹": ("🧦", "basket"), "🚿": ("🧽", "sink"),
+            "🧦": ("🧦", "basket"), "⚽": ("⚽", "toybox"), "🥤": ("🥤", "sink"), "🧴": ("🧴", "sink"), "📘": ("📘", "desk"),
         ]
         guard let p = map[ch.emoji], let t = targets(room).first(where: { $0.id == p.1 }) else { return nil }
         return DragTask(kid: kid, chore: ch, obj: p.0, target: t)
@@ -55,6 +56,7 @@ enum RoomItems {
     /** أماكن ظهور الأغراض: نسبة أفقية من العرض، ونسبة من عمق الأرضية */
     static let spots: [(CGFloat, CGFloat)] = [
         (0.30, 0.45), (0.55, 0.70), (0.78, 0.40), (0.42, 0.85), (0.66, 0.88), (0.20, 0.75), (0.50, 0.30), (0.88, 0.70),
+        (0.12, 0.40), (0.36, 0.62), (0.60, 0.50), (0.82, 0.92), (0.26, 0.95), (0.72, 0.62),
     ]
 }
 

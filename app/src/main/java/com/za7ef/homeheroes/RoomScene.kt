@@ -58,10 +58,10 @@ object RoomItems {
 
     /** أغراض للعب فقط (بدون مهمة) يقدر الطفل يسحبها لأي مكان */
     fun decor(roomId: String): List<String> = when (roomId) {
-        "kitchen" -> listOf("🍎", "🥤")
-        "bedroom" -> listOf("📕", "🎈")
-        "bath" -> listOf("🦆", "🧴")
-        else -> listOf("⚽", "🪀")
+        "kitchen" -> listOf("🍎", "🍌", "🥄", "🧃")
+        "bedroom" -> listOf("📕", "🎈", "🧩", "🖍️")
+        "bath" -> listOf("🦆", "🧽", "🪮", "🫧")
+        else -> listOf("🪀", "🚗", "🎲", "🪁")
     }
 
     /** يحوّل المهمة لغرض وهدف لو كانت مهمة لها غرض ملموس في هذه الغرفة */
@@ -80,6 +80,11 @@ object RoomItems {
             "🧼" -> "🧼" to "sink"
             "🧹" -> "🧦" to "basket"
             "🚿" -> "🧽" to "sink"
+            "🧦" -> "🧦" to "basket"
+            "⚽" -> "⚽" to "toybox"
+            "🥤" -> "🥤" to "sink"
+            "🧴" -> "🧴" to "sink"
+            "📘" -> "📘" to "desk"
             else -> return null
         }
         val t = targets(roomId).firstOrNull { it.id == targetId } ?: return null
@@ -90,6 +95,7 @@ object RoomItems {
     private val spots = listOf(
         0.30f to 0.45f, 0.55f to 0.70f, 0.78f to 0.40f, 0.42f to 0.85f,
         0.66f to 0.88f, 0.20f to 0.75f, 0.50f to 0.30f, 0.88f to 0.70f,
+        0.12f to 0.40f, 0.36f to 0.62f, 0.60f to 0.50f, 0.82f to 0.92f, 0.26f to 0.95f, 0.72f to 0.62f,
     )
 
     fun spot(i: Int): Pair<Float, Float> = spots[i % spots.size]

@@ -8,12 +8,21 @@ func charHeight(_ id: String) -> CGFloat {
 final class Chatter: ObservableObject {
     @Published var lines: [String: String] = [:]
     private var timer: Timer?
+    private var busyUntil = Date.distantPast
+    private var gen = 0
 
     func say(_ kid: String, _ s: String, _ secs: Double = 2.6) {
         lines[kid] = s
         DispatchQueue.main.asyncAfter(deadline: .now() + secs) { [weak self] in
             if self?.lines[kid] == s { self?.lines[kid] = nil }
         }
+    }
+
+    /** فقاعة مع صوت الشخصية (المقطع المسجل إن وُجد، وإلا صوت الجهاز) */
+    func talk(_ kid: String, _ s: String) {
+        guard !s.isEmpty else { return }
+        say(kid, s)
+        Speaker.shared.say(s, as: kid)
     }
 
     func start(visible: @escaping () -> [Kid], roomOf: @escaping (String) -> String) {
@@ -23,16 +32,24 @@ final class Chatter: ObservableObject {
             let vis = visible()
             let ids = Set(vis.map { $0.id })
             let together = Talk.convos.filter { ids.contains($0.a) && ids.contains($0.b) && roomOf($0.a) == roomOf($0.b) }
+            if self.busyUntil > Date() { return }
             if let c = together.randomElement(), Double.random(in: 0...1) < 0.75 {
-                self.say(c.a, c.lineA)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { self.say(c.b, c.lineB) }
+                // حوار متناوب: كل سطر بعد اللي قبله، والمؤقت لا يبدأ حوارًا جديدًا قبل نهايته
+                let g = self.gen
+                for (i, line) in c.lines.enumerated() {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 2.6) { [weak self] in
+                        guard let self = self, self.gen == g else { return }
+                        self.talk(c.speaker(i), line)
+                    }
+                }
+                self.busyUntil = Date().addingTimeInterval(Double(c.lines.count) * 2.6 + 0.5)
             } else if let k = vis.randomElement() {
-                self.say(k.id, Talk.solo(k, roomOf(k.id)).randomElement() ?? "")
+                self.talk(k.id, Talk.solo(k, roomOf(k.id)).randomElement() ?? "")
             }
         }
     }
 
-    func stop() { timer?.invalidate(); timer = nil }
+    func stop() { timer?.invalidate(); timer = nil; gen += 1; busyUntil = .distantPast }
 }
 
 struct Bubble: View {
@@ -71,6 +88,7 @@ struct HomeView: View {
         }
         .onAppear {
             if store.checkFamilyBonus() { nav.flash("🎉 العيلة كلها فازت بتحدي اليوم! +10 لكل واحد") }
+            chat.start(visible: { Family.kids }, roomOf: { store.kidRoom($0) })
         }
         .onDisappear { chat.stop() }
     }

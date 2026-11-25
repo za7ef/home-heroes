@@ -61,6 +61,9 @@ object Family {
                 listOf("💧", "اشرب مويتك", 5, "kitchen"),
                 listOf("🍽️", "كُل أكلك كله", 5, "kitchen"),
                 listOf("👋", "قول السلام عليكم", 5, "living"),
+                listOf("⚽", "رجّع الكورة للصندوق", 5, "living"),
+                listOf("🧦", "حط جواربك في السلة", 5, "bath"),
+                listOf("🥤", "ودّ كاستك للمغسلة", 5, "kitchen"),
             )
             "layan" -> listOf(
                 listOf("🛏️", "رتّبي سريرك", 10, "bedroom"),
@@ -70,6 +73,10 @@ object Family {
                 listOf("🍽️", "ساعدي في ترتيب السفرة", 10, "kitchen"),
                 listOf("📚", "اقري قصة", 10, "bedroom"),
                 listOf("🤲", "قولي أذكار الصباح", 10, "living"),
+                listOf("🧦", "حطّي جواربك في السلة", 5, "bath"),
+                listOf("🥤", "ودّي كاستك للمغسلة", 5, "kitchen"),
+                listOf("🧴", "رجّعي الشامبو مكانه", 5, "bath"),
+                listOf("👕", "حطّي ملابسك في السلة", 5, "bedroom"),
             )
             "rayan" -> listOf(
                 listOf("🛏️", "رتّب سريرك", 10, "bedroom"),
@@ -81,6 +88,10 @@ object Family {
                 listOf("🗑️", "طلّع الزبالة", 10, "kitchen"),
                 listOf("🤝", "ساعد ليان ترتّب ألعابها", 15, "living"),
                 listOf("📖", "اقرأ 15 دقيقة", 10, "bedroom"),
+                listOf("👟", "رتّب جزمتك في الرف", 5, "living"),
+                listOf("🧦", "حط جواربك في السلة", 5, "bath"),
+                listOf("📘", "رجّع كتبك للمكتب", 10, "bedroom"),
+                listOf("🥤", "ودّ الكاسات للمغسلة", 5, "kitchen"),
             )
             else -> listOf(
                 listOf("🕌", "صلّ الصلوات الخمس", 20, "living"),
@@ -92,6 +103,10 @@ object Family {
                 listOf("🤝", "العب مع أيان 15 دقيقة", 15, "living"),
                 listOf("📖", "اقرأ صفحتين قرآن", 15, "living"),
                 listOf("🚿", "نظّف المغسلة بعد ما تستخدمها", 10, "bath"),
+                listOf("🍽️", "شيل الصحون بعد الأكل", 10, "kitchen"),
+                listOf("👟", "رتّب الجزم في الرف", 10, "living"),
+                listOf("📘", "رجّع كتبك للمكتب", 10, "bedroom"),
+                listOf("⚽", "رجّع ألعاب أيان للصندوق", 10, "living"),
             )
         }
         return list.mapIndexed { i, p -> Chore("${kidId}_$i", p[0] as String, p[1] as String, p[2] as Int, p[3] as String) }
