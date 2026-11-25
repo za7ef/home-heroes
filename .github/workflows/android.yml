@@ -1,0 +1,64 @@
+name: Android
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Keystore
+        env:
+          KS_B64: ${{ secrets.HH_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/hh.p12"
+            echo "HH_KEYSTORE=$RUNNER_TEMP/hh.p12" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build APK
+        env:
+          HH_KS_PASS: ${{ secrets.HH_KS_PASS }}
+        run: gradle :app:assembleRelease --stacktrace
+
+      - name: Version
+        id: ver
+        run: |
+          VN=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          VC=$(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts)
+          echo "vn=$VN" >> "$GITHUB_OUTPUT"
+          echo "vc=$VC" >> "$GITHUB_OUTPUT"
+          cp app/build/outputs/apk/release/app-release.apk "HomeHeroes-$VN-build$VC.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HomeHeroes-${{ steps.ver.outputs.vn }}-build${{ steps.ver.outputs.vc }}
+          path: HomeHeroes-*.apk
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VN=${{ steps.ver.outputs.vn }}
+          VC=${{ steps.ver.outputs.vc }}
+          gh release create "${GITHUB_REF_NAME}" "HomeHeroes-$VN-build$VC.apk" \
+            --title "Home Heroes $VN (Build $VC)" \
+            --notes-file "release-notes/$VN.md"
