@@ -59,24 +59,15 @@ object Needs {
         "toilet" -> "خلاص! 😌"
         "health" -> "أحسن! 😊"
         else -> listOf("هييه! 🎉", "لعب! 🙌").random()
-    } else fem(kid, when (meter) {
-        "hunger" -> listOf("يمي، لذيذ! 😋", "شكراً، شبعت 😊", "الحمد لله 🤲").random()
-        "clean" -> listOf("صرت نظيف! ✨", "ريحتي حلوة 🧼", "أسناني تلمع! 😁").random()
-        "sleep" -> listOf("ارتحت مرة 😌", "تصبحون على خير 😴", "نمت نومة حلوة 🌙").random()
-        "toilet" -> listOf("ارتحت! 😌", "غسلت يدي بعد 🧼").random()
-        "health" -> listOf("صرت أحسن، الحمد لله 💪", "شكراً، راح التعب 😊").random()
-        else -> listOf("هذا ممتع! 🎉", "مرة وناسة! 😄", "نلعب مرة ثانية؟ 🙌").random()
-    })
+    } else effect(meter)
 
-    fun full(kid: Kid): String = if (kid.toddler) "خلاص! 🙅" else "خلاص، يكفي! 😅"
+    fun full(kid: Kid): String = if (kid.toddler) "خلاص! 🙅" else "🙅"
 
     /** عبارة الاحتياج من مجموعة عباراته، بخلط بلا تكرار: لا تتكرر العبارة قبل استخدام البقية (محفوظ بين الجلسات) */
     fun needLine(store: Store, kid: Kid, m: Meter): String {
         val pool = NeedLines.pools[NeedLines.group(kid)]?.get(m.id).orEmpty()
-        if (pool.isEmpty()) return m.emoji
+        if (pool.isEmpty()) return m.emoji // الشخصيات الكبيرة: أيقونة فقط حتى تُسجّل عباراتها
         return pool[store.nextFromPool("${kid.id}_${m.id}", pool.size)]
     }
 
-    private fun fem(kid: Kid, s: String): String =
-        if (kid.id == "layan") s.replace("نظيف", "نظيفة").replace("جوعان", "جوعانة") else s
 }

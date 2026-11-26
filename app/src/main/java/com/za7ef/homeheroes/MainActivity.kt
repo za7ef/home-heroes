@@ -12,7 +12,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.speech.tts.TextToSpeech
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
@@ -27,12 +26,9 @@ import android.widget.TextView
 import android.widget.Toast
 import java.util.Locale
 
-class MainActivity : Activity(), TextToSpeech.OnInitListener {
+class MainActivity : Activity() {
 
     private lateinit var store: Store
-    private var tts: TextToSpeech? = null
-    private var ttsReady = false
-    private var ttsWarned = false
     private val main = Handler(Looper.getMainLooper())
 
     /** شاشة الرجوع عند ضغط زر الرجوع */
@@ -52,7 +48,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         super.onCreate(savedInstanceState)
         store = Store(this)
         store.pruneOldChoreRequests()
-        tts = TextToSpeech(this, this)
         sound = Sound(this).also { Sound.current = it }
         voice = Voice(this)
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
@@ -77,7 +72,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     override fun onDestroy() {
         stopTalk()
-        tts?.shutdown()
         sound?.release()
         voice?.stop()
         if (Sound.current === sound) Sound.current = null
@@ -92,26 +86,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     // ---------------- صوت ----------------
 
-    override fun onInit(status: Int) {
-        if (status != TextToSpeech.SUCCESS) return
-        val r = tts?.setLanguage(Locale("ar"))
-        ttsReady = r != null && r != TextToSpeech.LANG_MISSING_DATA && r != TextToSpeech.LANG_NOT_SUPPORTED
-        tts?.setSpeechRate(0.9f)
-    }
-
-    /** يشغّل الصوت المسجّل للعبارة إن وُجد (بصوت المتحدث who)، وإلا ينطقها محرك الجهاز */
+    /** يشغّل الصوت المسجّل للعبارة (بصوت المتحدث who) فقط؛ العبارة غير المسجّلة تظهر نصًا بلا صوت */
     private fun speak(s: String, who: String? = null) {
-        tts?.stop()
         if (voice?.play(s, who) == true) return
         voice?.stop()
-        if (!ttsReady) {
-            if (!ttsWarned) {
-                ttsWarned = true
-                Toast.makeText(this, "النطق العربي غير مثبّت في الجهاز. يمكن تثبيته من إعدادات تحويل النص إلى كلام.", Toast.LENGTH_LONG).show()
-            }
-            return
-        }
-        tts?.speak(s, TextToSpeech.QUEUE_FLUSH, null, "hh")
     }
 
     private fun cheerSound() {
