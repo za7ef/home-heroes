@@ -102,8 +102,9 @@ object RoomItems {
 }
 
 /**
- * الغرفة التفاعلية: الخلفية مرسومة بنفس مقياس الإحداثيات، والأغراض تنسحب،
- * والشخصية تمشي على الأرضية فقط، تمسك الغرض وتوديه لمكانه.
+ * الغرفة التفاعلية على طريقة ألعاب الحيوان الأليف: الشخصيات واقفة على الأرضية،
+ * وأدوات الغرفة في شريط تحت، تُسحب الأداة على الشخصية فتستخدمها (أكل، تنظيف، نوم، لعب)
+ * ويرتفع مؤشر احتياجها. فوق رأس كل شخصية أيقونة احتياجها لما يكون ناقص.
  */
 @SuppressLint("ViewConstructor")
 class RoomScene(
@@ -111,32 +112,35 @@ class RoomScene(
     private val roomId: String,
     private val bgRes: Int,
     private val kids: List<Kid>,
-    private val tasks: List<DragTask>,
-    private val onTaskDone: (DragTask) -> Unit,
+    private val store: Store,
     private val say: (View, String) -> Unit,
     private val speak: (String, String?) -> Unit,
     private val onKidTap: (Kid, CharacterView) -> Unit,
 ) : FrameLayout(ctx) {
 
     val chars = mutableMapOf<String, CharacterView>()
+    private val needIcons = mutableMapOf<String, TextView>()
     private val busy = mutableSetOf<String>()
     private val art = RoomItems.art(roomId)
-    private val targetViews = mutableMapOf<String, View>()
     private var built = false
     private var selected: String? = kids.firstOrNull()?.id
     private val bg = ImageView(ctx)
+    private var meterBox: LinearLayout? = null
 
-    // تحويل إحداثيات الصورة إلى إحداثيات الشاشة (عرض كامل، والصورة ملتصقة بالأسفل)
     private var scale = 1f
     private var offY = 0f
-    private var floorY = 0f
 
     private fun dp(v: Float): Float = v * resources.displayMetrics.density
-    private fun sx(fx: Float) = fx * art.iw * scale
-    private fun sy(fy: Float) = offY + fy * art.ih * scale
 
     /** كل الأبناء بإحداثيات من اليسار للأعلى حتى لا تنعكس الحركة في واجهة عربية */
     private fun lp(w: Int, h: Int) = LayoutParams(w, h, Gravity.TOP or Gravity.LEFT)
+
+    private val ticker = object : Runnable {
+        override fun run() {
+            refreshNeeds()
+            postDelayed(this, 4000)
+        }
+    }
 
     init {
         layoutDirection = View.LAYOUT_DIRECTION_LTR
@@ -147,12 +151,14 @@ class RoomScene(
         addView(bg, lp(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
     }
 
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); postDelayed(ticker, 4000) }
+    override fun onDetachedFromWindow() { removeCallbacks(ticker); super.onDetachedFromWindow() }
+
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         super.onSizeChanged(w, h, ow, oh)
         if (w <= 0 || h <= 0) return
         scale = w / art.iw
         offY = h - art.ih * scale
-        floorY = sy(art.floorTop).coerceIn(h * 0.35f, h * 0.88f)
         val d = bg.drawable
         if (d != null && d.intrinsicWidth > 0) {
             val s = w.toFloat() / d.intrinsicWidth
@@ -164,61 +170,12 @@ class RoomScene(
         }
     }
 
-    private fun floorPoint(x: Float, depth: Float): Pair<Float, Float> =
-        x.coerceIn(dp(30f), width - dp(30f)) to (floorY + (height - floorY) * depth.coerceIn(0f, 1f))
-
-    private fun clampFloorY(y: Float): Float = y.coerceIn(floorY + dp(4f), height - dp(2f))
-
-    /** مكان وقوف الشخصية أمام المكان (على الأرض دائمًا) */
-    private fun standFor(t: Target): Pair<Float, Float> {
-        val x = sx(t.fx)
-        return if (t.prop) {
-            val side = if (x > width / 2f) -1f else 1f
-            (x + side * dp(70f)).coerceIn(dp(40f), width - dp(40f)) to clampFloorY(sy(t.fy) + dp(10f))
-        } else {
-            x.coerceIn(dp(40f), width - dp(40f)) to clampFloorY(floorY + (height - floorY) * 0.3f)
-        }
-    }
-
     private fun build() {
         val w = width.toFloat()
         val h = height.toFloat()
+        val trayH = dp(78f)
 
-        // الأماكن: علامة خفيفة فوق الأثاث المرسوم، أو غرض مرسوم على الأرض
-        for (t in art.targets) {
-            val box = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER_HORIZONTAL
-            }
-            if (t.prop) {
-                box.addView(TextView(context).apply { text = t.emoji; textSize = 46f; gravity = Gravity.CENTER })
-            } else {
-                box.addView(View(context).apply {
-                    background = rounded(0x33FFFFFF, dp(30f), dp(3f).toInt(), 0xCCFFFFFF.toInt())
-                }, LinearLayout.LayoutParams(dp(60f).toInt(), dp(60f).toInt()))
-            }
-            box.addView(TextView(context).apply {
-                text = t.name; textSize = 13f; setTextColor(0xFF5C3D2E.toInt()); gravity = Gravity.CENTER
-                setTypeface(typeface, android.graphics.Typeface.BOLD)
-                background = rounded(0xE6FFFFFF.toInt(), dp(12f))
-                setPadding(dp(8f).toInt(), dp(1f).toInt(), dp(8f).toInt(), dp(2f).toInt())
-            })
-            box.setOnClickListener { speak(t.name, null) }
-            addView(box, lp(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
-            targetViews[t.id] = box
-            box.post {
-                box.x = (sx(t.fx) - box.width / 2f).coerceIn(0f, w - box.width)
-                val cy = if (t.prop) sy(t.fy) - box.height * 0.6f else sy(t.fy) - dp(30f)
-                box.y = cy.coerceIn(0f, h - box.height)
-            }
-        }
-
-        // الأغراض على الأرضية: المهام أولًا ثم أغراض اللعب
-        var i = 0
-        for (dt in tasks) addObject(dt.obj, RoomItems.spot(i++), dt)
-        for (d in RoomItems.decor(roomId)) addObject(d, RoomItems.spot(i++), null)
-
-        // الشخصيات على الأرضية
+        // الشخصيات على الأرضية فوق شريط الأدوات
         val n = kids.size
         kids.forEachIndexed { idx, kid ->
             val ch = h * when (kid.id) { "ayan" -> 0.30f; "layan" -> 0.36f; "rayan" -> 0.41f; else -> 0.45f }
@@ -227,64 +184,123 @@ class RoomScene(
             addView(v, lp(cw.toInt(), ch.toInt()))
             val fx = (idx + 1f) / (n + 1f)
             v.x = fx * w - cw / 2f
-            v.y = h - dp(4f) - ch
+            v.y = h - trayH - dp(2f) - ch
             v.setOnClickListener {
                 Sound.current?.tap()
                 selected = kid.id
-                onKidTap(kid, v)
+                refreshMeters()
+                bounce(v)
+                val low = Needs.lowest(store, kid.id)
+                if (low != null) {
+                    val line = Needs.needLine(store, kid, low)
+                    say(v, line); speak(line, kid.id)
+                } else onKidTap(kid, v)
             }
             chars[kid.id] = v
+
+            val icon = TextView(context).apply {
+                textSize = 26f; gravity = Gravity.CENTER
+                background = rounded(Color.WHITE, dp(24f), dp(3f).toInt(), 0xFFE03131.toInt())
+                visibility = View.INVISIBLE
+                elevation = dp(4f)
+            }
+            addView(icon, lp(dp(48f).toInt(), dp(48f).toInt()))
+            icon.x = v.x + cw / 2f - dp(24f)
+            icon.y = (v.y - dp(52f)).coerceAtLeast(dp(60f))
+            icon.setOnClickListener { v.performClick() }
+            needIcons[kid.id] = icon
         }
+
+        // شريط الأدوات ومؤشرات الطفل المختار
+        val tray = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = rounded(0xEEFFFFFF.toInt(), dp(22f), dp(3f).toInt(), 0xFFE8590C.toInt())
+            setPadding(dp(10f).toInt(), dp(4f).toInt(), dp(10f).toInt(), dp(4f).toInt())
+            elevation = dp(6f)
+        }
+        val mb = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
+        meterBox = mb
+        tray.addView(mb, LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { rightMargin = dp(12f).toInt() })
+        for (tool in Needs.tools(roomId)) tray.addView(toolView(tool), LinearLayout.LayoutParams(dp(62f).toInt(), dp(62f).toInt()).apply {
+            leftMargin = dp(4f).toInt(); rightMargin = dp(4f).toInt()
+        })
+        addView(tray, LayoutParams(LayoutParams.WRAP_CONTENT, trayH.toInt(), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+            bottomMargin = dp(2f).toInt()
+        })
+        refreshNeeds()
+    }
+
+    /** مؤشرات الطفل المختار: أربعة أشرطة صغيرة */
+    private fun refreshMeters() {
+        val mb = meterBox ?: return
+        mb.removeAllViews()
+        val kid = kids.firstOrNull { it.id == selected } ?: return
+        val grid = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
+        val cols = List(3) { LinearLayout(context).apply { orientation = LinearLayout.VERTICAL } }
+        Needs.meters.forEachIndexed { i, m ->
+            val v = store.need(kid.id, m.id)
+            val row = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            row.addView(TextView(context).apply { text = m.emoji; textSize = 15f })
+            val track = FrameLayout(context).apply { background = rounded(0xFFDEE2E6.toInt(), dp(5f)) }
+            val color = if (v < Needs.LOW) 0xFFE03131.toInt() else if (v < 65f) 0xFFF59F00.toInt() else 0xFF2F9E44.toInt()
+            track.addView(View(context).apply { background = rounded(color, dp(5f)) },
+                LayoutParams((dp(46f) * (v / 100f)).toInt().coerceAtLeast(dp(4f).toInt()), LayoutParams.MATCH_PARENT, Gravity.LEFT))
+            row.addView(track, LinearLayout.LayoutParams(dp(46f).toInt(), dp(10f).toInt()).apply { leftMargin = dp(4f).toInt() })
+            cols[i / 2].addView(row, LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(1f).toInt(); bottomMargin = dp(1f).toInt(); rightMargin = dp(8f).toInt()
+            })
+        }
+        cols.forEach { grid.addView(it) }
+        mb.addView(TextView(context).apply {
+            text = kid.name; textSize = 13f; setTextColor(kid.color); setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        mb.addView(grid)
+    }
+
+    /** أيقونة الاحتياج فوق رأس كل طفل */
+    private fun refreshNeeds() {
+        for (kid in kids) {
+            val icon = needIcons[kid.id] ?: continue
+            val low = Needs.lowest(store, kid.id)
+            if (low == null) {
+                icon.visibility = View.INVISIBLE
+                icon.animate().cancel(); icon.rotation = 0f
+            } else {
+                icon.text = low.emoji
+                if (icon.visibility != View.VISIBLE) { icon.visibility = View.VISIBLE; wiggle(icon) }
+            }
+        }
+        refreshMeters()
     }
 
     @SuppressLint("ClickableViewAccessibility")
-    private fun addObject(emoji: String, spot: Pair<Float, Float>, task: DragTask?) {
+    private fun toolView(tool: Tool): View {
         val v = TextView(context).apply {
-            text = emoji
-            textSize = if (task != null) 44f else 36f
-            gravity = Gravity.CENTER
-            if (task != null) {
-                background = rounded(0x55FFFFFF, dp(40f), dp(3f).toInt(), task.kid.color)
-                setPadding(dp(6f).toInt(), 0, dp(6f).toInt(), 0)
-            }
+            text = tool.emoji; textSize = 34f; gravity = Gravity.CENTER
+            background = rounded(0xFFFFF4D6.toInt(), dp(31f), dp(2f).toInt(), 0xFFFFC078.toInt())
         }
-        addView(v, lp(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
-        v.post {
-            val (px, py) = floorPoint(spot.first * width, spot.second)
-            v.x = px - v.width / 2f
-            v.y = py - v.height
-            if (task != null) wiggle(v)
-        }
-
         var ghost: TextView? = null
-        var dx = 0f
-        var dy = 0f
+        var sx0 = 0f
+        var sy0 = 0f
         v.setOnTouchListener { _, ev ->
-            // إحداثيات اللمس داخل المشهد = مكان الغرض + مكان اللمس داخله
-            val px = v.x + ev.x
-            val py = v.y + ev.y
+            // إحداثيات اللمس داخل المشهد نفسه
+            val loc = IntArray(2); getLocationOnScreen(loc)
+            val px = ev.rawX - loc[0]
+            val py = ev.rawY - loc[1]
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    if (v.tag == "moving") return@setOnTouchListener false
                     parent?.requestDisallowInterceptTouchEvent(true)
-                    dx = ev.x
-                    dy = ev.y
-                    val g = TextView(context).apply {
-                        text = emoji; textSize = v.textSize / resources.displayMetrics.scaledDensity * 1.15f
-                        alpha = 0.8f
-                    }
+                    sx0 = px; sy0 = py
+                    val g = TextView(context).apply { text = tool.emoji; textSize = 46f; alpha = 0.9f; elevation = dp(10f) }
                     addView(g, lp(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
-                    g.x = v.x; g.y = v.y
+                    g.x = px - dp(28f); g.y = py - dp(70f)
                     ghost = g
                     Sound.current?.tap()
-                    if (task != null) speak(if (task.kid.toddler) task.target.name else "ودّها ${task.target.name}", null)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    ghost?.let {
-                        it.x = px - dx
-                        it.y = py - dy
-                    }
+                    ghost?.let { it.x = px - dp(28f); it.y = py - dp(70f) }
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -292,156 +308,89 @@ class RoomScene(
                     ghost = null
                     removeView(g)
                     if (ev.actionMasked == MotionEvent.ACTION_CANCEL) return@setOnTouchListener true
-                    if (hypot(ev.x - dx, ev.y - dy) < dp(24f)) return@setOnTouchListener true
-                    onDrop(v, emoji, task, px, py)
+                    if (hypot(px - sx0, py - sy0) < dp(20f)) {
+                        speak(tool.name, null)
+                        return@setOnTouchListener true
+                    }
+                    val hit = kidAt(px, py - dp(42f))
+                    if (hit != null) care(hit, tool) else speak("اسحبها على واحد من العيال", null)
                     true
                 }
                 else -> false
             }
         }
+        return v
     }
 
-    private fun targetAt(x: Float, y: Float): Target? {
-        val r = dp(70f)
-        var best: Target? = null
-        var bestD = Float.MAX_VALUE
-        for (t in art.targets) {
-            val tv = targetViews[t.id] ?: continue
-            val cx = tv.x + tv.width / 2f
-            val cy = tv.y + tv.height / 2f
-            val d = hypot(x - cx, y - cy)
-            if (d < r + maxOf(tv.width, tv.height) / 2f && d < bestD) { best = t; bestD = d }
-        }
-        return best
+    private fun kidAt(x: Float, y: Float): CharacterView? {
+        val pad = dp(24f)
+        return chars.values.filter { x >= it.x - pad && x <= it.x + it.width + pad && y >= it.y - pad && y <= it.y + it.height + pad }
+            .minByOrNull { hypot(x - (it.x + it.width / 2f), y - (it.y + it.height / 2f)) }
     }
 
-    private fun onDrop(obj: TextView, emoji: String, task: DragTask?, x: Float, y: Float) {
-        val hit = targetAt(x, y)
-        val kidId = task?.kid?.id ?: selected ?: kids.firstOrNull()?.id
-        val cv = kidId?.let { chars[it] }
-        if (cv == null) {
-            speak("نادِ أحد أول", null)
+    /** استخدام الأداة على الشخصية: الأداة تتحرك عند الفم أو الرأس أو اليد، ثم يرتفع المؤشر */
+    private fun care(cv: CharacterView, tool: Tool) {
+        val kid = cv.kid
+        if (busy.contains(kid.id)) return
+        selected = kid.id
+        if (store.need(kid.id, tool.meter) >= 95f) {
+            Sound.current?.wrong()
+            val l = Needs.full(kid)
+            say(cv, l); speak(l, kid.id)
+            refreshMeters()
             return
         }
-        if (busy.contains(cv.kid.id)) {
-            say(cv, "لحظة! 🙂")
-            speak("لحظة! 🙂", cv.kid.id)
-            return
-        }
-        val correct = task != null && hit != null && hit.id == task.target.id
-        val (destX, destY) = if (hit != null) standFor(hit) else (x.coerceIn(dp(30f), width - dp(30f)) to clampFloorY(y))
-        obj.tag = "moving"
-        busy.add(cv.kid.id)
-        cv.bringToFront()
-        // ١) يمشي للغرض على الأرض
-        walkTo(cv, obj.x + obj.width / 2f, obj.y + obj.height) {
-            // ٢) ينحني ويمسكه
-            pick(cv) {
-                cv.carrying = emoji
-                Sound.current?.pickUp()
-                obj.visibility = View.INVISIBLE
-                // ٣) يمشي على الأرض إلى المكان
-                walkTo(cv, destX, destY) {
-                    pick(cv) {
-                        cv.carrying = null
-                        busy.remove(cv.kid.id)
-                        val chestX = cv.x + cv.width / 2f - obj.width / 2f
-                        val chestY = cv.y + cv.height * 0.45f - obj.height / 2f
-                        obj.x = chestX
-                        obj.y = chestY
-                        obj.visibility = View.VISIBLE
-                        obj.bringToFront()
-                        if (hit != null) {
-                            val tv = targetViews[hit.id]
-                            val tx = (tv?.let { it.x + it.width / 2f } ?: sx(hit.fx)) - obj.width / 2f
-                            val ty = (tv?.let { it.y + it.height / 2f } ?: sy(hit.fy)) - obj.height / 2f
-                            // يرمي/يحط الغرض في المكان
-                            obj.animate().x(tx).y(ty).setDuration(320).withEndAction {
-                                if (task == null || correct) {
-                                    obj.animate().scaleX(0.2f).scaleY(0.2f).alpha(0f).setDuration(250).withEndAction {
-                                        removeView(obj)
-                                    }.start()
-                                    tv?.animate()?.scaleX(1.15f)?.scaleY(1.15f)?.setDuration(150)?.withEndAction {
-                                        tv.animate().scaleX(1f).scaleY(1f).setDuration(150).start()
-                                    }?.start()
-                                } else {
-                                    // مكان غلط: يطيح على الأرض جنب الشخصية
-                                    obj.animate().x(cv.x + cv.width - obj.width / 2f)
-                                        .y(clampFloorY(cv.y + cv.height) - obj.height).setDuration(350)
-                                        .withEndAction { obj.tag = null }.start()
-                                }
-                            }.start()
-                        } else {
-                            obj.animate().x(destX - obj.width / 2f).y(destY - obj.height).setDuration(300)
-                                .withEndAction { obj.tag = null }.start()
-                        }
-                        when {
-                            correct -> onTaskDone(task!!)
-                            task != null -> {
-                                Sound.current?.wrong()
-                                val msg = "مو هنا! مكانه ${task.target.emoji} ${task.target.name}"
-                                say(cv, msg)
-                                speak(if (cv.kid.toddler) task.target.name else msg, cv.kid.id)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /** المشي على الأرضية فقط: القدمان لا تطلعان فوق خط الأرضية */
-    private fun walkTo(cv: CharacterView, footX: Float, footY: Float, then: () -> Unit) {
-        val tx = (footX - cv.width / 2f).coerceIn(0f, width - cv.width.toFloat())
-        val ty = clampFloorY(footY) - cv.height
-        val sx0 = cv.x
-        val sy0 = cv.y
-        val dist = hypot(tx - sx0, ty - sy0)
-        if (dist < 4f) return then()
-        cv.walking = true
-        cv.scaleX = if (tx < sx0) -1f else 1f
-        ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = (dist / (width * 0.35f) * 1000f).toLong().coerceIn(350L, 2600L)
-            interpolator = LinearInterpolator()
-            addUpdateListener {
-                val f = it.animatedValue as Float
-                cv.x = sx0 + (tx - sx0) * f
-                cv.y = sy0 + (ty - sy0) * f
-            }
-            addListener(object : android.animation.AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: android.animation.Animator) {
-                    cv.walking = false
-                    cv.scaleX = 1f
-                    then()
-                }
-            })
-            start()
-        }
-    }
-
-    /** انحناء قصير لالتقاط الغرض أو وضعه */
-    private fun pick(cv: CharacterView, then: () -> Unit) {
-        ValueAnimator.ofFloat(0f, 1f, 0f).apply {
-            duration = 450
-            addUpdateListener { cv.bend = it.animatedValue as Float }
-            addListener(object : android.animation.AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: android.animation.Animator) {
-                    cv.bend = 0f
-                    then()
-                }
-            })
-            start()
-        }
-    }
-
-    private fun wiggle(v: View) {
-        v.animate().rotation(8f).setDuration(500).withEndAction {
-            v.animate().rotation(-8f).setDuration(500).withEndAction {
-                if (v.isAttachedToWindow && v.tag == null) wiggle(v) else v.rotation = 0f
+        busy.add(kid.id)
+        val t = TextView(context).apply { text = tool.emoji; textSize = 40f; elevation = dp(10f) }
+        addView(t, lp(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+        val fy = when (tool.spot) { "mouth" -> 0.17f; "head" -> 0.02f; else -> 0.45f }
+        t.post {
+            t.x = cv.x + cv.width * (if (tool.spot == "hand") 0.85f else 0.5f) - t.width / 2f
+            t.y = cv.y + cv.height * fy - t.height / 2f
+            t.animate().rotation(25f).translationXBy(dp(8f)).setDuration(220).withEndAction {
+                t.animate().rotation(-25f).translationXBy(-dp(16f)).setDuration(220).withEndAction {
+                    t.animate().rotation(25f).translationXBy(dp(16f)).setDuration(220).withEndAction {
+                        t.animate().rotation(0f).alpha(0f).scaleX(0.3f).scaleY(0.3f).setDuration(250).withEndAction {
+                            removeView(t)
+                            finishCare(cv, tool)
+                        }.start()
+                    }.start()
+                }.start()
             }.start()
+        }
+        bounce(cv)
+    }
+
+    private fun finishCare(cv: CharacterView, tool: Tool) {
+        val kid = cv.kid
+        store.addNeed(kid.id, tool.meter, tool.amount)
+        busy.remove(kid.id)
+        Sound.current?.success()
+        val line = Needs.react(kid, tool.meter)
+        say(cv, line); speak(line, kid.id)
+        // أثر فوق الرأس
+        repeat(3) { i ->
+            val e = TextView(context).apply { text = Needs.effect(tool.meter); textSize = 26f; elevation = dp(8f) }
+            addView(e, lp(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+            e.x = cv.x + cv.width * (0.25f + 0.25f * i)
+            e.y = cv.y + cv.height * 0.1f
+            e.animate().translationYBy(-dp(70f)).alpha(0f).setStartDelay(i * 120L).setDuration(900).withEndAction { removeView(e) }.start()
+        }
+        refreshNeeds()
+    }
+
+    private fun bounce(v: View) {
+        v.pivotX = v.width / 2f; v.pivotY = v.height.toFloat()
+        v.animate().scaleY(1.06f).scaleX(0.97f).setDuration(120).withEndAction {
+            v.animate().scaleY(1f).scaleX(1f).setDuration(160).start()
         }.start()
     }
 
-    @Suppress("unused")
-    private val transparent = Color.TRANSPARENT
+    private fun wiggle(v: View) {
+        v.animate().rotation(10f).setDuration(450).withEndAction {
+            v.animate().rotation(-10f).setDuration(450).withEndAction {
+                if (v.isAttachedToWindow && v.visibility == View.VISIBLE) wiggle(v) else v.rotation = 0f
+            }.start()
+        }.start()
+    }
 }
