@@ -17,7 +17,7 @@ data class Room(val id: String, val name: String, val emoji: String, val bg: Int
 object Rooms {
     val all = listOf(
         Room("kitchen", "المطبخ", "🍳", R.drawable.room_kitchen),
-        Room("living", "الصالة", "🛋️", R.drawable.room_living),
+        Room("living", "غرفة اللعب", "🧸", R.drawable.room_living),
         Room("bedroom", "غرفة النوم", "🛏️", R.drawable.room_bedroom),
         Room("bath", "الحمام", "🛁", R.drawable.room_bath),
     )
@@ -146,6 +146,37 @@ class Store(ctx: Context) {
     // ---------- مكان كل طفل في البيت ----------
     fun kidRoom(kidId: String): String = prefs.getString("room_$kidId", null) ?: Family.startRoom(kidId)
     fun setKidRoom(kidId: String, roomId: String) { prefs.edit().putString("room_$kidId", roomId).apply() }
+
+    // ---------- الاحتياجات: القيمة المحفوظة ووقت حفظها، وتنقص مع الوقت ----------
+    fun need(kidId: String, meterId: String): Float {
+        val m = Needs.meter(meterId)
+        val v = prefs.getFloat("need_${kidId}_$meterId", 70f)
+        val at = prefs.getLong("needAt_${kidId}_$meterId", 0L)
+        if (at == 0L) {
+            prefs.edit().putFloat("need_${kidId}_$meterId", v).putLong("needAt_${kidId}_$meterId", System.currentTimeMillis()).apply()
+            return v
+        }
+        val hours = (System.currentTimeMillis() - at) / 3_600_000f
+        return (v - m.perHour * hours).coerceIn(0f, 100f)
+    }
+
+    /** خلط بلا تكرار: يرجع رقم العبارة التالية ويحفظ الباقي، ولما تخلص يعيد الخلط (بدون تكرار آخر عبارة) */
+    fun nextFromPool(key: String, size: Int): Int {
+        var left = prefs.getString("pool_$key", "")!!.split(",").mapNotNull { it.toIntOrNull() }.filter { it < size }
+        val last = prefs.getInt("poolLast_$key", -1)
+        if (left.isEmpty()) {
+            left = (0 until size).shuffled()
+            if (left.size > 1 && left.first() == last) left = left.drop(1) + left.first()
+        }
+        val i = left.first()
+        prefs.edit().putString("pool_$key", left.drop(1).joinToString(",")).putInt("poolLast_$key", i).apply()
+        return i
+    }
+
+    fun addNeed(kidId: String, meterId: String, amount: Float) {
+        val v = (need(kidId, meterId) + amount).coerceIn(0f, 100f)
+        prefs.edit().putFloat("need_${kidId}_$meterId", v).putLong("needAt_${kidId}_$meterId", System.currentTimeMillis()).apply()
+    }
 
     // ---------- Points ----------
     fun points(kidId: String): Int = prefs.getInt("pts_$kidId", 0)

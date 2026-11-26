@@ -36,7 +36,7 @@ struct Room: Identifiable, Equatable {
 enum Rooms {
     static let all: [Room] = [
         Room(id: "kitchen", name: "المطبخ", emoji: "🍳", bg: "room_kitchen.jpg"),
-        Room(id: "living", name: "الصالة", emoji: "🛋️", bg: "room_living.jpg"),
+        Room(id: "living", name: "غرفة اللعب", emoji: "🧸", bg: "room_living.jpg"),
         Room(id: "bedroom", name: "غرفة النوم", emoji: "🛏️", bg: "room_bedroom.jpg"),
         Room(id: "bath", name: "الحمام", emoji: "🛁", bg: "room_bath.jpg"),
     ]
@@ -150,6 +150,39 @@ final class Store: ObservableObject {
 
     func kidRoom(_ k: String) -> String { d.string(forKey: "room_\(k)") ?? Family.startRoom(k) }
     func setKidRoom(_ k: String, _ r: String) { d.set(r, forKey: "room_\(k)"); changed() }
+
+    // الاحتياجات: القيمة المحفوظة ووقت حفظها، وتنقص مع الوقت
+    func need(_ k: String, _ m: String) -> Double {
+        let meter = Needs.meter(m)
+        let v = d.object(forKey: "need_\(k)_\(m)") as? Double ?? 70
+        let at = d.double(forKey: "needAt_\(k)_\(m)")
+        if at == 0 {
+            d.set(v, forKey: "need_\(k)_\(m)"); d.set(Date().timeIntervalSince1970, forKey: "needAt_\(k)_\(m)")
+            return v
+        }
+        let hours = (Date().timeIntervalSince1970 - at) / 3600
+        return min(max(v - meter.perHour * hours, 0), 100)
+    }
+
+    /** خلط بلا تكرار: يرجع رقم العبارة التالية ويحفظ الباقي، ولما تخلص يعيد الخلط */
+    func nextFromPool(_ key: String, _ size: Int) -> Int {
+        var left = (d.string(forKey: "pool_\(key)") ?? "").split(separator: ",").compactMap { Int($0) }.filter { $0 < size }
+        let last = d.object(forKey: "poolLast_\(key)") as? Int ?? -1
+        if left.isEmpty {
+            left = Array(0..<size).shuffled()
+            if left.count > 1 && left[0] == last { left.append(left.removeFirst()) }
+        }
+        let i = left.removeFirst()
+        d.set(left.map(String.init).joined(separator: ","), forKey: "pool_\(key)")
+        d.set(i, forKey: "poolLast_\(key)")
+        return i
+    }
+
+    func addNeed(_ k: String, _ m: String, _ amount: Double) {
+        let v = min(max(need(k, m) + amount, 0), 100)
+        d.set(v, forKey: "need_\(k)_\(m)"); d.set(Date().timeIntervalSince1970, forKey: "needAt_\(k)_\(m)")
+        changed()
+    }
 
     func points(_ k: String) -> Int { d.integer(forKey: "pts_\(k)") }
     func totalEarned(_ k: String) -> Int { d.integer(forKey: "earned_\(k)") }

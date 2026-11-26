@@ -175,7 +175,7 @@ struct HomeView: View {
                 } else {
                     withAnimation(.easeOut(duration: 0.15)) { selected = kid.id }
                     Speaker.shared.say(kid.name)
-                    chat.say(kid.id, kid.toddler ? "وين أروح؟ 🙂" : "وين أروح؟ اختار غرفة!")
+                    chat.say(kid.id, kid.toddler ? "وين؟ 🙂" : "وين أروح؟ اختار غرفة!")
                 }
             }
             .onLongPressGesture { nav.show(.kid(kid.id)) }
