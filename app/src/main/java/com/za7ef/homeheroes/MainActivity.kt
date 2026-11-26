@@ -46,6 +46,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Settings.init(this)
         store = Store(this)
         store.pruneOldChoreRequests()
         sound = Sound(this).also { Sound.current = it }
@@ -190,6 +191,7 @@ class MainActivity : Activity() {
             }
             top.addView(chips, lp(0, WRAP, 1f))
             val pending = store.requests().size
+            top.addView(button("⚙️", 0xFF5C5F66.toInt(), 18f) { showSettings { showHome() } }, lp(WRAP, WRAP, margin = dp(4)))
             top.addView(button(if (pending > 0) "🔒 $pending" else "🔒", 0xFF5C5F66.toInt(), 18f) { parentGate() })
             root.addView(top, lp(MATCH, WRAP))
 
@@ -368,6 +370,7 @@ class MainActivity : Activity() {
     }
 
     private fun talkOnce() {
+        if (!Settings.autoTalk) return
         val together = Talk.convos.filter {
             charViews.containsKey(it.a) && charViews.containsKey(it.b) && store.kidRoom(it.a) == store.kidRoom(it.b)
         }
@@ -648,24 +651,14 @@ class MainActivity : Activity() {
             }
             if (reqs.size > 1) c.addView(button("اعتماد الكل", green) { reqs.forEach { approveSilently(it) }; showParent() }, lp(MATCH, WRAP, margin = dp(6)))
 
-            c.addView(text("الإعدادات", 22f, orange, true).apply { setPadding(0, dp(16), 0, 0) })
+            c.addView(text("الإدارة", 22f, orange, true).apply { setPadding(0, dp(16), 0, 0) })
             for (kid in Family.kids) {
                 c.addView(button("✏️ مهام ${kid.name}", kid.color) { editChores(kid) }, lp(MATCH, WRAP, margin = dp(4)))
             }
             c.addView(button("🎁 تعديل المكافآت", orange) { editRewards() }, lp(MATCH, WRAP, margin = dp(4)))
             c.addView(button("➕➖ تعديل النقاط يدويًا", blue) { adjustPoints() }, lp(MATCH, WRAP, margin = dp(4)))
-            c.addView(android.widget.Switch(this).apply {
-                text = "🎵 موسيقى الخلفية"
-                textSize = 20f
-                setTypeface(typeface, android.graphics.Typeface.BOLD)
-                isChecked = sound?.musicOn ?: true
-                background = rounded(Color.WHITE, dp(18).toFloat())
-                setPadding(dp(16), dp(10), dp(16), dp(10))
-                setOnCheckedChangeListener { _, on -> sound?.musicOn = on }
-            }, lp(MATCH, WRAP, margin = dp(4)))
+            c.addView(button("⚙️ الإعدادات", gray) { showSettings { showParent() } }, lp(MATCH, WRAP, margin = dp(4)))
             c.addView(button("🔑 تغيير الرمز السري", gray) { changePin() }, lp(MATCH, WRAP, margin = dp(4)))
-            c.addView(button("🔄 التحقق من التحديثات", gray) { checkForUpdate(manual = true) }, lp(MATCH, WRAP, margin = dp(4)))
-            c.addView(button("ℹ️ حول التطبيق", gray) { showAbout() }, lp(MATCH, WRAP, margin = dp(4)))
             c.addView(button("🗑️ تصفير النقاط", red) { resetAll() }, lp(MATCH, WRAP, margin = dp(4)))
         }
     }
@@ -924,10 +917,64 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    // ---------------- الإعدادات ----------------
+
+    private var settingsBack: () -> Unit = { showHome() }
+
+    private fun showSettings(onBack: () -> Unit) {
+        settingsBack = onBack
+        screen("⚙️ الإعدادات", onBack) { c ->
+            c.addView(text("الصوت", 22f, orange, true))
+            c.addView(switchRow("🎵 موسيقى الخلفية", sound?.musicOn ?: true) { sound?.musicOn = it }, lp(MATCH, WRAP, margin = dp(4)))
+            c.addView(sliderRow("مستوى الموسيقى", Settings.musicVol) { Settings.musicVol = it; sound?.applyVolumes() }, lp(MATCH, WRAP, margin = dp(4)))
+            c.addView(switchRow("🔔 أصوات المؤثرات", Settings.fxOn) { Settings.fxOn = it }, lp(MATCH, WRAP, margin = dp(4)))
+            c.addView(sliderRow("مستوى المؤثرات", Settings.fxVol) { Settings.fxVol = it; sound?.applyVolumes() }, lp(MATCH, WRAP, margin = dp(4)))
+            c.addView(switchRow("🗣️ أصوات الشخصيات", Settings.voiceOn) { Settings.voiceOn = it; if (!it) voice?.stop() }, lp(MATCH, WRAP, margin = dp(4)))
+            c.addView(sliderRow("مستوى أصوات الشخصيات", Settings.voiceVol) { Settings.voiceVol = it }, lp(MATCH, WRAP, margin = dp(4)))
+            c.addView(text("اللعب", 22f, orange, true).apply { setPadding(0, dp(16), 0, 0) })
+            c.addView(switchRow("💬 حوارات تلقائية بين الشخصيات", Settings.autoTalk) { Settings.autoTalk = it }, lp(MATCH, WRAP, margin = dp(4)))
+            c.addView(text("التطبيق", 22f, orange, true).apply { setPadding(0, dp(16), 0, 0) })
+            c.addView(button("🔄 البحث عن تحديث", blue) { checkForUpdate(manual = true) }, lp(MATCH, WRAP, margin = dp(4)))
+            c.addView(button("ℹ️ حول التطبيق", gray) { showAbout() }, lp(MATCH, WRAP, margin = dp(4)))
+            c.addView(text("الإصدار ${localVersion()} (البناء ${localBuild()})", 16f, gray).apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, 0) }, lp(MATCH, WRAP))
+        }
+    }
+
+    private fun switchRow(label: String, on: Boolean, change: (Boolean) -> Unit): View = android.widget.Switch(this).apply {
+        text = label
+        textSize = 20f
+        setTypeface(typeface, android.graphics.Typeface.BOLD)
+        isChecked = on
+        background = rounded(Color.WHITE, dp(18).toFloat())
+        setPadding(dp(16), dp(10), dp(16), dp(10))
+        setOnCheckedChangeListener { _, v -> Sound.current?.tap(); change(v) }
+    }
+
+    private fun sliderRow(label: String, value: Int, change: (Int) -> Unit): View {
+        val row = vbox().apply {
+            background = rounded(Color.WHITE, dp(18).toFloat())
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+        }
+        val t = text("$label: $value%", 17f, 0xFF495057.toInt(), true)
+        row.addView(t)
+        row.addView(android.widget.SeekBar(this).apply {
+            max = 100
+            progress = value
+            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: android.widget.SeekBar?, p: Int, fromUser: Boolean) {
+                    if (fromUser) { t.text = "$label: $p%"; change(p) }
+                }
+                override fun onStartTrackingTouch(sb: android.widget.SeekBar?) {}
+                override fun onStopTrackingTouch(sb: android.widget.SeekBar?) { Sound.current?.tap() }
+            })
+        }, lp(MATCH, WRAP))
+        return row
+    }
+
     // ---------------- حول التطبيق ----------------
 
     private fun showAbout() {
-        screen("ℹ️ حول التطبيق", { showParent() }) { c ->
+        screen("ℹ️ حول التطبيق", { showSettings(settingsBack) }) { c ->
             c.addView(text("أبطال البيت", 30f, orange, true).apply { gravity = Gravity.CENTER }, lp(MATCH, WRAP))
             c.addView(text("الإصدار ${localVersion()} (البناء ${localBuild()})", 20f).apply { gravity = Gravity.CENTER }, lp(MATCH, WRAP))
             c.addView(text("لعبة مهام منزلية للأطفال: مهام يومية، نجوم ومستويات، مكافآت، واعتماد من الأهل. تعمل دون إنترنت.", 18f).apply { setPadding(0, dp(12), 0, dp(12)) })

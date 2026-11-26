@@ -35,8 +35,7 @@ final class Sound {
         engine.attach(fxNode)
         engine.connect(musicNode, to: engine.mainMixerNode, format: format)
         engine.connect(fxNode, to: engine.mainMixerNode, format: format)
-        musicNode.volume = 0.22
-        fxNode.volume = 0.6
+        applyVolumes()
         do { try engine.start() } catch { return }
         ready = true
         musicBuffer = makeMusic()
@@ -44,6 +43,51 @@ final class Sound {
         fx["pick"] = makeNotes([(659.3, 0.06), (880, 0.07)], wave: 0)
         fx["success"] = makeNotes([(523.3, 0.10), (659.3, 0.10), (784, 0.10), (1046.5, 0.28)], wave: 1)
         fx["wrong"] = makeNotes([(392, 0.14), (311.1, 0.22)], wave: 1)
+        fx["brush"] = makeNoise(0.14, decay: 18, smooth: 0.55, amp: 0.35)
+        fx["bite"] = makeNoise(0.08, decay: 40, smooth: 0.25, amp: 0.6)
+        fx["gulp"] = makeSweep(320, 140, 0.12, amp: 0.5)
+        fx["bubble"] = makeSweep(500, 1300, 0.07, amp: 0.35)
+        fx["splash"] = makeNoise(0.35, decay: 7, smooth: 0.7, amp: 0.3)
+        fx["flush"] = makeNoise(0.9, decay: 3, smooth: 0.85, amp: 0.35)
+        fx["boing"] = makeSweep(180, 520, 0.18, amp: 0.5)
+        fx["zoom"] = makeSweep(260, 620, 0.22, amp: 0.3)
+    }
+
+    /** يطبّق مستويات الصوت من الإعدادات */
+    func applyVolumes() {
+        musicNode.volume = Float(0.36 * Double(Settings.musicVol) / 100)
+        fxNode.volume = Float(0.75 * Double(Settings.fxVol) / 100)
+    }
+
+    /** ضجيج مُنعَّم (فرشاة، ماء، قضمة) */
+    private func makeNoise(_ dur: Double, decay: Double, smooth: Double, amp: Double) -> AVAudioPCMBuffer? {
+        let frames = AVAudioFrameCount(dur * rate)
+        guard let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames), let ch = buf.floatChannelData?[0] else { return nil }
+        buf.frameLength = frames
+        var gen = SystemRandomNumberGenerator()
+        var y = 0.0
+        for k in 0..<Int(frames) {
+            let t = Double(k) / rate
+            y = smooth * y + (1 - smooth) * Double.random(in: -1...1, using: &gen)
+            let env = min(1, t / 0.01) * exp(-decay * t)
+            ch[k] = Float(max(-1, min(1, y * env * amp * 2.2)))
+        }
+        return buf
+    }
+
+    /** نغمة تنزلق من تردد لآخر (فقاعة، بلعة، نطة) */
+    private func makeSweep(_ f0: Double, _ f1: Double, _ dur: Double, amp: Double) -> AVAudioPCMBuffer? {
+        let frames = AVAudioFrameCount(dur * rate)
+        guard let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames), let ch = buf.floatChannelData?[0] else { return nil }
+        buf.frameLength = frames
+        var ph = 0.0
+        for k in 0..<Int(frames) {
+            let t = Double(k) / rate
+            ph += 2 * Double.pi * (f0 + (f1 - f0) * t / dur) / rate
+            let env = min(1, t / 0.005) * exp(-4 * t / dur)
+            ch[k] = Float(sin(ph) * env * amp)
+        }
+        return buf
     }
 
     // MARK: - توليد الصوت
@@ -114,6 +158,7 @@ final class Sound {
     }
 
     private func play(_ name: String) {
+        guard Settings.fxOn else { return }
         setup()
         guard ready, let b = fx[name] else { return }
         fxNode.scheduleBuffer(b, at: nil, options: .interrupts)
@@ -124,4 +169,6 @@ final class Sound {
     func pickUp() { play("pick") }
     func success() { play("success") }
     func wrong() { play("wrong") }
+    /** صوت مؤثر باسمه: brush، bite، gulp، bubble، splash، flush، boing، zoom */
+    func effect(_ name: String) { play(name) }
 }

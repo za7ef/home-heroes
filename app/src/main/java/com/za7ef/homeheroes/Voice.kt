@@ -7,7 +7,7 @@ import org.json.JSONArray
 /**
  * أصوات مسجّلة مسبقًا للعبارات الثابتة (لكل شخصية وللراوي).
  * البحث بنص العبارة بعد حذف الرموز والإيموجي، ويُفضَّل صوت المتحدث نفسه.
- * إذا لم توجد العبارة يُرجع false ليُستخدم نطق الجهاز.
+ * إذا لم توجد العبارة (أو كانت الأصوات مطفأة) يُرجع false فتظهر العبارة نصًا بلا صوت.
  */
 class Voice(private val ctx: Context) {
     private val byKey = mutableMapOf<String, MutableMap<String, String>>()
@@ -28,6 +28,7 @@ class Voice(private val ctx: Context) {
     private fun key(s: String): String = s.filter { it.isLetterOrDigit() }
 
     fun play(text: String, speaker: String?): Boolean {
+        if (!Settings.voiceOn) return false
         val m = byKey[key(text)] ?: return false
         val file = (speaker?.let { m[it] }) ?: m["narrator"] ?: m.values.first()
         return try {
@@ -38,6 +39,8 @@ class Voice(private val ctx: Context) {
             afd.close()
             p.setOnCompletionListener { it.release(); if (player === it) player = null }
             p.prepare()
+            val vol = Settings.voiceVol / 100f
+            p.setVolume(vol, vol)
             p.start()
             player = p
             true

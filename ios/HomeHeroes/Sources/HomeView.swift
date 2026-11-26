@@ -28,7 +28,7 @@ final class Chatter: ObservableObject {
     func start(visible: @escaping () -> [Kid], roomOf: @escaping (String) -> String) {
         stop()
         timer = Timer.scheduledTimer(withTimeInterval: 7, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
+            guard let self = self, Settings.autoTalk else { return }
             let vis = visible()
             let ids = Set(vis.map { $0.id })
             let together = Talk.convos.filter { ids.contains($0.a) && ids.contains($0.b) && roomOf($0.a) == roomOf($0.b) }
@@ -109,6 +109,7 @@ struct HomeView: View {
             }
             Spacer()
             let n = store.requests().count
+            Btn("⚙️", Color(hex: 0x5C5F66), size: 18) { nav.settingsBack = .home; nav.show(.settings) }
             Btn(n > 0 ? "🔒 \(n)" : "🔒", Color(hex: 0x5C5F66), size: 18) { ParentGate.open(store, nav) }
         }.padding(.horizontal, 12).padding(.top, 8)
     }

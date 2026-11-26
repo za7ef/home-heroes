@@ -274,46 +274,70 @@ class RoomScene(
         refreshMeters()
     }
 
+    // ---------------- استخدام الأدوات بالإصبع ----------------
+
+    /** تقدّم الاستخدام غير المكتمل لكل طفل وأداة، حتى يكمل من حيث وقف */
+    private val partial = mutableMapOf<String, Float>()
+    private val bars = mutableMapOf<String, Pair<FrameLayout, View>>()
+
+    /** حالة الإمساك الحالية بالأداة */
+    private inner class Grip(val tool: Tool, val ghost: TextView) {
+        var kid: CharacterView? = null
+        var progress = 0f
+        var lastX = 0f
+        var lastY = 0f
+        var lastT = 0L
+        var moved = 0f
+        var fxDist = 0f
+        var fxTime = 0f
+        var lastDy = 0f
+        var steps = 0
+        var done = false
+        var warned = false
+        var engaged = false
+        var label: TextView? = null
+    }
+
+    private var grip: Grip? = null
+
     @SuppressLint("ClickableViewAccessibility")
     private fun toolView(tool: Tool): View {
         val v = TextView(context).apply {
             text = tool.emoji; textSize = 34f; gravity = Gravity.CENTER
             background = rounded(0xFFFFF4D6.toInt(), dp(31f), dp(2f).toInt(), 0xFFFFC078.toInt())
         }
-        var ghost: TextView? = null
-        var sx0 = 0f
-        var sy0 = 0f
+        var downAt = 0L
         v.setOnTouchListener { _, ev ->
-            // إحداثيات اللمس داخل المشهد نفسه
+            // إحداثيات اللمس داخل المشهد نفسه (من اليسار)
             val loc = IntArray(2); getLocationOnScreen(loc)
             val px = ev.rawX - loc[0]
             val py = ev.rawY - loc[1]
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     parent?.requestDisallowInterceptTouchEvent(true)
-                    sx0 = px; sy0 = py
-                    val g = TextView(context).apply { text = tool.emoji; textSize = 46f; alpha = 0.9f; elevation = dp(10f) }
-                    addView(g, lp(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
-                    g.x = px - dp(28f); g.y = py - dp(70f)
-                    ghost = g
-                    Sound.current?.tap()
+                    downAt = System.currentTimeMillis()
+                    val g = TextView(context).apply { text = tool.emoji; textSize = 54f; elevation = dp(12f); gravity = Gravity.CENTER }
+                    addView(g, lp(dp(84f).toInt(), dp(84f).toInt()))
+                    val gr = Grip(tool, g)
+                    gr.lastX = px; gr.lastY = py; gr.lastT = System.currentTimeMillis()
+                    grip = gr
+                    placeGhost(gr, px, py)
+                    Sound.current?.pickUp()
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    ghost?.let { it.x = px - dp(28f); it.y = py - dp(70f) }
+                    grip?.let { onGripMove(it, px, py) }
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    val g = ghost ?: return@setOnTouchListener true
-                    ghost = null
-                    removeView(g)
-                    if (ev.actionMasked == MotionEvent.ACTION_CANCEL) return@setOnTouchListener true
-                    if (hypot(px - sx0, py - sy0) < dp(20f)) {
-                        speak(tool.name, null)
-                        return@setOnTouchListener true
+                    val gr = grip ?: return@setOnTouchListener true
+                    grip = null
+                    releaseGrip(gr)
+                    if (ev.actionMasked == MotionEvent.ACTION_UP && !gr.done) {
+                        val quick = System.currentTimeMillis() - downAt < 350
+                        if (gr.moved < dp(20f) && quick) speak(tool.name, null)
+                        else if (!gr.engaged) speak("اسحبها على واحد من العيال", null)
                     }
-                    val hit = kidAt(px, py - dp(42f))
-                    if (hit != null) care(hit, tool) else speak("اسحبها على واحد من العيال", null)
                     true
                 }
                 else -> false
@@ -322,44 +346,304 @@ class RoomScene(
         return v
     }
 
-    private fun kidAt(x: Float, y: Float): CharacterView? {
-        val pad = dp(24f)
-        return chars.values.filter { x >= it.x - pad && x <= it.x + it.width + pad && y >= it.y - pad && y <= it.y + it.height + pad }
-            .minByOrNull { hypot(x - (it.x + it.width / 2f), y - (it.y + it.height / 2f)) }
+    /** الأداة تظهر فوق الإصبع قليلًا حتى يراها الطفل */
+    private fun placeGhost(gr: Grip, px: Float, py: Float) {
+        gr.ghost.x = px - dp(42f)
+        gr.ghost.y = py - dp(100f)
     }
 
-    /** استخدام الأداة على الشخصية: الأداة تتحرك عند الفم أو الرأس أو اليد، ثم يرتفع المؤشر */
-    private fun care(cv: CharacterView, tool: Tool) {
-        val kid = cv.kid
-        if (busy.contains(kid.id)) return
-        selected = kid.id
-        if (store.need(kid.id, tool.meter) >= 95f) {
-            Sound.current?.wrong()
-            val l = Needs.full(kid)
-            say(cv, l); speak(l, kid.id)
-            refreshMeters()
+    /** رأس الأداة (النقطة التي تلمس الشخصية) */
+    private fun tip(gr: Grip): Pair<Float, Float> = (gr.ghost.x + dp(42f)) to (gr.ghost.y + dp(42f))
+
+    /** هل رأس الأداة على المكان الصحيح من الشخصية؟ */
+    private fun zoneHit(cv: CharacterView, tool: Tool, x: Float, y: Float): Boolean {
+        return when (tool.spot) {
+            "mouth" -> {
+                val (mx, my) = cv.mouth()
+                val r = maxOf(cv.width * 0.32f, dp(38f))
+                hypot(x - (cv.x + mx), y - (cv.y + my)) < r
+            }
+            "head" -> {
+                val (hx, hy) = cv.head()
+                x > cv.x - dp(20f) && x < cv.x + cv.width + dp(20f) &&
+                    y > cv.y + hy - dp(140f) && y < cv.y + hy + cv.height * 0.18f && hypot(x - (cv.x + hx), 0f) < cv.width * 0.8f
+            }
+            else -> x > cv.x - dp(16f) && x < cv.x + cv.width + dp(16f) && y > cv.y && y < cv.y + cv.height
+        }
+    }
+
+    private fun onGripMove(gr: Grip, px: Float, py: Float) {
+        val now = System.currentTimeMillis()
+        val dx = px - gr.lastX
+        val dy = py - gr.lastY
+        val dist = hypot(dx, dy)
+        val dt = ((now - gr.lastT) / 1000f).coerceIn(0f, 0.12f)
+        gr.lastX = px; gr.lastY = py; gr.lastT = now
+        gr.moved += dist
+        placeGhost(gr, px, py)
+        if (gr.done) return
+        val tool = gr.tool
+        val (tx, ty) = tip(gr)
+        val hit = chars.values.firstOrNull { zoneHit(it, tool, tx, ty) }
+
+        // ترك الشخصية السابقة
+        val prev = gr.kid
+        if (prev != null && prev !== hit) leaveKid(gr, prev)
+        if (hit == null) {
+            idleGhost(gr, dx)
             return
         }
-        busy.add(kid.id)
-        val t = TextView(context).apply { text = tool.emoji; textSize = 40f; elevation = dp(10f) }
-        addView(t, lp(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
-        val fy = when (tool.spot) { "mouth" -> 0.17f; "head" -> 0.02f; else -> 0.45f }
-        t.post {
-            t.x = cv.x + cv.width * (if (tool.spot == "hand") 0.85f else 0.5f) - t.width / 2f
-            t.y = cv.y + cv.height * fy - t.height / 2f
-            t.animate().rotation(25f).translationXBy(dp(8f)).setDuration(220).withEndAction {
-                t.animate().rotation(-25f).translationXBy(-dp(16f)).setDuration(220).withEndAction {
-                    t.animate().rotation(25f).translationXBy(dp(16f)).setDuration(220).withEndAction {
-                        t.animate().rotation(0f).alpha(0f).scaleX(0.3f).scaleY(0.3f).setDuration(250).withEndAction {
-                            removeView(t)
-                            finishCare(cv, tool)
-                        }.start()
-                    }.start()
-                }.start()
-            }.start()
+        if (prev !== hit) {
+            // بداية الاستخدام على هذه الشخصية
+            gr.kid = hit
+            gr.engaged = true
+            selected = hit.kid.id
+            refreshMeters()
+            if (busy.contains(hit.kid.id)) return
+            if (store.need(hit.kid.id, tool.meter) >= 95f) {
+                if (!gr.warned) {
+                    gr.warned = true
+                    Sound.current?.wrong()
+                    val l = Needs.full(hit.kid)
+                    say(hit, l); speak(l, hit.kid.id)
+                }
+                return
+            }
+            gr.progress = partial[key(hit, tool)] ?: 0f
+            hit.face = Needs.use(tool.kind).face
+            showBar(hit, gr.progress)
         }
-        bounce(cv)
+        if (busy.contains(hit.kid.id) || store.need(hit.kid.id, tool.meter) >= 95f) return
+
+        val use = Needs.use(tool.kind)
+        val dDp = dist / resources.displayMetrics.density
+        gr.progress += dDp / use.rub + dt / use.hold
+        animateTool(gr, hit, dx, dy, dist, dt)
+        showBar(hit, gr.progress)
+        if (gr.progress >= 1f) completeGrip(gr, hit)
     }
+
+    private fun key(cv: CharacterView, tool: Tool) = cv.kid.id + "|" + tool.emoji
+
+    private fun idleGhost(gr: Grip, dx: Float) {
+        if (gr.tool.kind == "car") { if (dx > 1f) gr.ghost.scaleX = -1f else if (dx < -1f) gr.ghost.scaleX = 1f }
+        else if (gr.tool.kind != "ball") gr.ghost.rotation = 0f
+        gr.label?.let { removeView(it) }; gr.label = null
+    }
+
+    private fun leaveKid(gr: Grip, cv: CharacterView) {
+        if (!gr.done && gr.progress > 0f && gr.progress < 1f) partial[key(cv, gr.tool)] = gr.progress
+        cv.face = null
+        hideBar(cv)
+        gr.kid = null
+        gr.label?.let { removeView(it) }; gr.label = null
+        removeDoor(cv)
+    }
+
+    private fun releaseGrip(gr: Grip) {
+        gr.kid?.let { leaveKid(gr, it) }
+        val g = gr.ghost
+        g.animate().alpha(0f).scaleX(0.4f).scaleY(0.4f).setDuration(160).withEndAction { removeView(g) }.start()
+    }
+
+    private fun completeGrip(gr: Grip, cv: CharacterView) {
+        gr.done = true
+        partial.remove(key(cv, gr.tool))
+        cv.face = null
+        hideBar(cv)
+        gr.label?.let { removeView(it) }; gr.label = null
+        removeDoor(cv)
+        when (gr.tool.kind) {
+            "toilet" -> Sound.current?.effect("flush")
+            "pill", "drink" -> Sound.current?.effect("gulp")
+        }
+        val g = gr.ghost
+        g.animate().alpha(0f).scaleX(0.3f).scaleY(0.3f).setDuration(220).withEndAction { removeView(g) }.start()
+        finishCare(cv, gr.tool)
+    }
+
+    /** أنيميشن خاص لكل أداة أثناء استخدامها */
+    private fun animateTool(gr: Grip, cv: CharacterView, dx: Float, dy: Float, dist: Float, dt: Float) {
+        val g = gr.ghost
+        val (tx, ty) = tip(gr)
+        gr.fxDist += dist
+        gr.fxTime += dt
+        val (mx0, my0) = cv.mouth()
+        val mx = cv.x + mx0
+        val my = cv.y + my0
+        when (gr.tool.kind) {
+            "brush" -> {
+                // الفرشاة تميل مع اتجاه الحركة، ورغوة تتجمع عند الفم
+                g.rotation = if (dx > 0) 18f else if (dx < 0) -18f else g.rotation
+                if (gr.fxDist > dp(26f)) {
+                    gr.fxDist = 0f
+                    particle("🫧", mx + rnd(-dp(26f), dp(26f)), my + rnd(-dp(14f), dp(14f)), 16f + rnd(0f, 10f), rnd(-dp(10f), dp(10f)), -dp(18f), 900)
+                    if ((++gr.steps) % 2 == 0) Sound.current?.effect("brush")
+                }
+            }
+            "eat" -> {
+                // قضمات: الأكل يصغر مع كل قضمة وتتطاير فتافيت
+                val bites = (gr.progress * 4).toInt()
+                if (bites > gr.steps) {
+                    gr.steps = bites
+                    Sound.current?.effect("bite")
+                    val sc = 1f - 0.18f * bites
+                    g.scaleX = sc; g.scaleY = sc
+                    repeat(3) { particle(gr.tool.emoji, mx + rnd(-dp(16f), dp(16f)), my + dp(6f), 10f, rnd(-dp(40f), dp(40f)), dp(70f), 600) }
+                }
+                g.rotation = (Math.sin(System.currentTimeMillis() / 90.0) * 8).toFloat()
+            }
+            "drink" -> {
+                g.rotation = -55f
+                if (gr.fxTime > 0.55f) {
+                    gr.fxTime = 0f
+                    Sound.current?.effect("gulp")
+                    particle("💧", mx + rnd(-dp(10f), dp(10f)), my, 14f, 0f, dp(30f), 500)
+                }
+            }
+            "pill" -> { g.rotation = -20f }
+            "thermo" -> {
+                g.rotation = -35f
+                val t = 36.0f + 1.0f * gr.progress.coerceAtMost(1f)
+                val lab = gr.label ?: TextView(context).apply {
+                    textSize = 18f; setTextColor(0xFFE03131.toInt()); setTypeface(typeface, android.graphics.Typeface.BOLD)
+                    background = rounded(Color.WHITE, dp(10f), dp(2f).toInt(), 0xFFE03131.toInt())
+                    setPadding(dp(8f).toInt(), dp(2f).toInt(), dp(8f).toInt(), dp(2f).toInt())
+                    elevation = dp(12f)
+                }.also { addView(it, lp(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)); gr.label = it }
+                lab.text = String.format(java.util.Locale.US, "%.1f°", t)
+                lab.x = tx + dp(30f); lab.y = ty - dp(60f)
+            }
+            "scrub" -> {
+                g.rotation = if (dx > 0) 12f else if (dx < 0) -12f else g.rotation
+                if (gr.fxDist > dp(24f)) {
+                    gr.fxDist = 0f
+                    particle("🫧", tx + rnd(-dp(20f), dp(20f)), ty + rnd(-dp(20f), dp(20f)), 18f + rnd(0f, 12f), rnd(-dp(12f), dp(12f)), -dp(30f), 1000)
+                    if ((++gr.steps) % 2 == 0) Sound.current?.effect("bubble")
+                }
+            }
+            "shower" -> {
+                g.rotation = 0f
+                if (gr.fxTime > 0.09f) {
+                    gr.fxTime = 0f
+                    particle("💧", tx + rnd(-dp(26f), dp(26f)), ty + dp(20f), 16f, rnd(-dp(6f), dp(6f)), dp(160f), 650)
+                    if ((++gr.steps) % 5 == 0) Sound.current?.effect("splash")
+                }
+            }
+            "toilet" -> {
+                // باب يغطي الشخصية حتى ينتهي
+                val door = doorFor(cv)
+                door.alpha = (0.3f + gr.progress).coerceAtMost(1f)
+            }
+            "sleep" -> {
+                g.rotation = (Math.sin(System.currentTimeMillis() / 400.0) * 10).toFloat()
+                if (gr.fxTime > 0.5f) {
+                    gr.fxTime = 0f
+                    val (hx, hy) = cv.head()
+                    particle("💤", cv.x + hx + dp(20f), cv.y + hy, 22f, dp(30f), -dp(50f), 1200)
+                }
+            }
+            "hug" -> {
+                g.rotation = (Math.sin(System.currentTimeMillis() / 160.0) * 12).toFloat()
+                if (gr.fxTime > 0.35f) {
+                    gr.fxTime = 0f
+                    particle("💕", tx + rnd(-dp(20f), dp(20f)), ty - dp(20f), 20f, rnd(-dp(10f), dp(10f)), -dp(60f), 1000)
+                }
+            }
+            "story" -> {
+                // صفحات تتقلب ونجوم خيال
+                if (gr.fxTime > 0.5f) {
+                    gr.fxTime = 0f
+                    g.scaleX = -g.scaleX.let { if (it == 0f) 1f else it }
+                    Sound.current?.tap()
+                    particle(listOf("⭐", "🌈", "🦄", "🏰").random(), tx + rnd(-dp(30f), dp(30f)), ty - dp(30f), 20f, rnd(-dp(20f), dp(20f)), -dp(50f), 1100)
+                }
+            }
+            "ball" -> {
+                // كل ما ينعكس اتجاه الحركة العمودية تنط الكورة
+                if (dy != 0f && gr.lastDy != 0f && (dy > 0) != (gr.lastDy > 0) && gr.fxDist > dp(30f)) {
+                    gr.fxDist = 0f
+                    Sound.current?.effect("boing")
+                    particle("✨", tx, ty + dp(30f), 18f, 0f, dp(10f), 400)
+                }
+                if (dy != 0f) gr.lastDy = dy
+                g.rotation += dist * 0.8f
+            }
+            "balloon" -> {
+                g.rotation = (Math.sin(System.currentTimeMillis() / 200.0) * 15).toFloat()
+                if (gr.fxDist > dp(60f)) {
+                    gr.fxDist = 0f
+                    Sound.current?.effect("bubble")
+                    particle(listOf("🎊", "🎉", "✨").random(), tx + rnd(-dp(30f), dp(30f)), ty - dp(30f), 18f, rnd(-dp(30f), dp(30f)), -dp(50f), 900)
+                }
+            }
+            "puzzle" -> {
+                val pieces = (gr.progress * 5).toInt()
+                if (pieces > gr.steps) {
+                    gr.steps = pieces
+                    Sound.current?.tap()
+                    val (cx, cy) = cv.chest()
+                    particle("🧩", tx, ty, 22f, cv.x + cx - tx, cv.y + cy - ty, 500)
+                }
+                g.rotation = if (dx > 0) 10f else if (dx < 0) -10f else g.rotation
+            }
+            "car" -> {
+                // السيارة تلتفت لجهة الحركة ويطلع غبار وراها
+                if (dx > 1f) g.scaleX = -1f else if (dx < -1f) g.scaleX = 1f
+                if (gr.fxDist > dp(50f)) {
+                    gr.fxDist = 0f
+                    if ((++gr.steps) % 2 == 0) Sound.current?.effect("zoom")
+                    particle("💨", tx - (if (g.scaleX < 0) dp(40f) else -dp(40f)), ty + dp(10f), 18f, if (g.scaleX < 0) -dp(30f) else dp(30f), 0f, 600)
+                }
+            }
+        }
+    }
+
+    private fun rnd(a: Float, b: Float): Float = a + (b - a) * kotlin.random.Random.nextFloat()
+
+    /** جزيء صغير يطير ويختفي */
+    private fun particle(e: String, x: Float, y: Float, size: Float, dx: Float, dy: Float, ms: Long) {
+        val t = TextView(context).apply { text = e; textSize = size; elevation = dp(11f) }
+        addView(t, lp(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+        t.x = x - dp(size * 0.6f); t.y = y - dp(size * 0.6f)
+        t.animate().translationXBy(dx).translationYBy(dy).alpha(0f).setDuration(ms).withEndAction { removeView(t) }.start()
+    }
+
+    private val doors = mutableMapOf<String, TextView>()
+
+    private fun doorFor(cv: CharacterView): TextView = doors[cv.kid.id] ?: TextView(context).apply {
+        text = "🚪"; gravity = Gravity.CENTER; elevation = dp(9f); alpha = 0f
+        textSize = (cv.height / resources.displayMetrics.scaledDensity) * 0.7f
+    }.also {
+        addView(it, lp(cv.width + dp(30f).toInt(), cv.height))
+        it.x = cv.x - dp(15f); it.y = cv.y
+        doors[cv.kid.id] = it
+    }
+
+    private fun removeDoor(cv: CharacterView) {
+        doors.remove(cv.kid.id)?.let { d -> d.animate().alpha(0f).setDuration(200).withEndAction { removeView(d) }.start() }
+    }
+
+    /** شريط تقدم صغير فوق رأس الشخصية أثناء الاستخدام */
+    private fun showBar(cv: CharacterView, p: Float) {
+        val (track, fillV) = bars[cv.kid.id] ?: run {
+            val tr = FrameLayout(context).apply {
+                background = rounded(Color.WHITE, dp(8f), dp(2f).toInt(), 0xFF2F9E44.toInt()); elevation = dp(12f)
+            }
+            val f = View(context).apply { background = rounded(0xFF51CF66.toInt(), dp(6f)) }
+            tr.addView(f, LayoutParams(0, LayoutParams.MATCH_PARENT, Gravity.LEFT))
+            addView(tr, lp(dp(84f).toInt(), dp(14f).toInt()))
+            (tr to f).also { bars[cv.kid.id] = it }
+        }
+        track.visibility = View.VISIBLE
+        track.x = cv.x + cv.width / 2f - dp(42f)
+        track.y = (cv.y - dp(18f)).coerceAtLeast(dp(4f))
+        val lpF = fillV.layoutParams
+        lpF.width = (dp(80f) * p.coerceIn(0f, 1f)).toInt()
+        fillV.layoutParams = lpF
+    }
+
+    private fun hideBar(cv: CharacterView) { bars[cv.kid.id]?.first?.visibility = View.GONE }
 
     private fun finishCare(cv: CharacterView, tool: Tool) {
         val kid = cv.kid

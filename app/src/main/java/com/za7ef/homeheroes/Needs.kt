@@ -6,8 +6,18 @@ package com.za7ef.homeheroes
  */
 data class Meter(val id: String, val emoji: String, val name: String, val perHour: Float, val room: String)
 
-/** أداة تُسحب على الشخصية. spot: مكان استخدامها (الفم، الرأس، اليد) */
-data class Tool(val emoji: String, val name: String, val meter: String, val amount: Float, val spot: String)
+/**
+ * أداة يمسكها الطفل بإصبعه ويحرّكها على الشخصية. spot: مكان استخدامها (الفم، الرأس، اليد/الجسم).
+ * kind: نوع الحركة والأنيميشن الخاص بها (أكل، شرب، تفريش، صابون، دش، ...).
+ */
+data class Tool(val emoji: String, val name: String, val meter: String, val amount: Float, val spot: String, val kind: String)
+
+/**
+ * طريقة استخدام كل نوع: rub = مسافة التحريك (dp) اللازمة لإنهاء الاستخدام بالتحريك فقط،
+ * hold = عدد الثواني اللازمة لو بقيت الأداة ثابتة على مكانها. التقدم = مجموع الاثنين.
+ * face: تعبير الوجه أثناء الاستخدام (teeth أسنان، chew مضغ، open فم مفتوح، sleep عيون مغمضة).
+ */
+data class ToolUse(val rub: Float, val hold: Float, val face: String?)
 
 object Needs {
     const val LOW = 35f
@@ -25,23 +35,38 @@ object Needs {
 
     fun tools(roomId: String): List<Tool> = when (roomId) {
         "kitchen" -> listOf(
-            Tool("🍎", "تفاحة", "hunger", 25f, "mouth"), Tool("🍌", "موزة", "hunger", 25f, "mouth"),
-            Tool("🥛", "حليب", "hunger", 20f, "mouth"), Tool("🥪", "ساندويتش", "hunger", 35f, "mouth"),
+            Tool("🍎", "تفاحة", "hunger", 25f, "mouth", "eat"), Tool("🍌", "موزة", "hunger", 25f, "mouth", "eat"),
+            Tool("🥛", "حليب", "hunger", 20f, "mouth", "drink"), Tool("🥪", "ساندويتش", "hunger", 35f, "mouth", "eat"),
         )
         "bath" -> listOf(
-            Tool("🪥", "فرشاة الأسنان", "clean", 25f, "mouth"), Tool("🧼", "الصابون", "clean", 30f, "hand"),
-            Tool("🚿", "الدش", "clean", 40f, "head"), Tool("🚽", "الحمام", "toilet", 100f, "hand"),
-            Tool("💊", "الدوا", "health", 40f, "mouth"),
+            Tool("🪥", "فرشاة الأسنان", "clean", 25f, "mouth", "brush"), Tool("🧼", "الصابون", "clean", 30f, "hand", "scrub"),
+            Tool("🚿", "الدش", "clean", 40f, "head", "shower"), Tool("🚽", "الحمام", "toilet", 100f, "hand", "toilet"),
+            Tool("💊", "الدوا", "health", 40f, "mouth", "pill"),
         )
         "bedroom" -> listOf(
-            Tool("🌙", "النوم", "sleep", 45f, "head"), Tool("🧸", "الدبدوب", "sleep", 20f, "hand"),
-            Tool("📖", "قصة", "sleep", 15f, "hand"), Tool("💊", "الدوا", "health", 40f, "mouth"),
-            Tool("🌡️", "الحرارة", "health", 10f, "mouth"),
+            Tool("🌙", "النوم", "sleep", 45f, "head", "sleep"), Tool("🧸", "الدبدوب", "sleep", 20f, "hand", "hug"),
+            Tool("📖", "قصة", "sleep", 15f, "hand", "story"), Tool("💊", "الدوا", "health", 40f, "mouth", "pill"),
+            Tool("🌡️", "الحرارة", "health", 10f, "mouth", "thermo"),
         )
         else -> listOf(
-            Tool("⚽", "الكورة", "fun", 30f, "hand"), Tool("🎈", "البالون", "fun", 20f, "hand"),
-            Tool("🧩", "اللغز", "fun", 20f, "hand"), Tool("🚗", "السيارة", "fun", 20f, "hand"),
+            Tool("⚽", "الكورة", "fun", 30f, "hand", "ball"), Tool("🎈", "البالون", "fun", 20f, "hand", "balloon"),
+            Tool("🧩", "اللغز", "fun", 20f, "hand", "puzzle"), Tool("🚗", "السيارة", "fun", 20f, "hand", "car"),
         )
+    }
+
+    fun use(kind: String): ToolUse = when (kind) {
+        "eat" -> ToolUse(520f, 6f, "chew")
+        "drink" -> ToolUse(2400f, 2.5f, "open")
+        "brush" -> ToolUse(720f, 40f, "teeth")
+        "scrub" -> ToolUse(800f, 40f, null)
+        "shower" -> ToolUse(2600f, 3f, "sleep")
+        "toilet" -> ToolUse(4000f, 2.5f, null)
+        "pill" -> ToolUse(4000f, 1.2f, "open")
+        "thermo" -> ToolUse(4000f, 2.5f, "open")
+        "sleep" -> ToolUse(2600f, 3f, "sleep")
+        "hug" -> ToolUse(1600f, 2.5f, null)
+        "story" -> ToolUse(3000f, 3f, null)
+        else -> ToolUse(720f, 40f, null) // ball, balloon, puzzle, car: باللعب والتحريك
     }
 
     /** أقل احتياج تحت الحد، أو لا شيء */

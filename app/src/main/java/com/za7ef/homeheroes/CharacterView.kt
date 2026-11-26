@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.view.View
@@ -14,6 +15,19 @@ import kotlin.math.sin
 
 /** أبعاد رسم الشخصية بالبكسل الأصلي: العرض، الارتفاع، ومستوى الورك (بداية الرجلين) */
 data class Rig(val w: Float, val h: Float, val legY: Float)
+
+/** ملامح الوجه في رسم الجسم (بالبكسل الأصلي): العينان والفم ولون البشرة، لأنيميشن الأدوات */
+data class Face(val eyeLX: Float, val eyeRX: Float, val eyeY: Float, val eyeR: Float,
+                val mouthX: Float, val mouthY: Float, val mouthW: Float, val skin: Int)
+
+object Faces {
+    fun of(kidId: String): Face = when (kidId) {
+        "ayan" -> Face(102f, 172f, 142f, 22f, 140f, 210f, 50f, 0xFFF9CA92.toInt())
+        "layan" -> Face(83f, 148f, 107f, 17f, 118f, 161f, 44f, 0xFFF8DFC6.toInt())
+        "rayan" -> Face(83f, 148f, 117f, 16f, 118f, 179f, 42f, 0xFFF4D5B7.toInt())
+        else -> Face(78f, 146f, 122f, 16f, 111f, 191f, 42f, 0xFFEACCB1.toInt())
+    }
+}
 
 object Rigs {
     fun of(kidId: String): Rig = when (kidId) {
@@ -40,6 +54,28 @@ class CharacterView(ctx: Context, val kid: Kid) : View(ctx) {
     /** لحظة الانحناء لالتقاط غرض أو وضعه (0..1) */
     var bend = 0f
         set(v) { field = v; invalidate() }
+
+    /** تعبير الوجه أثناء استخدام أداة: teeth، chew، open، sleep أو null */
+    var face: String? = null
+        set(v) { if (field != v) { field = v; invalidate() } }
+
+    private val fc = Faces.of(kid.id)
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
+
+    /** موضع نقطة من الرسم الأصلي داخل حدود العرض (للفم والرأس) */
+    fun pointOf(rx: Float, ry: Float): Pair<Float, Float> {
+        val vw = width.toFloat(); val vh = height.toFloat()
+        val s = minOf(vh / rig.h, vw / rig.w)
+        val ox = (vw - rig.w * s) / 2f
+        val oy = vh - rig.h * s
+        return (ox + rx * s) to (oy + ry * s)
+    }
+
+    fun mouth(): Pair<Float, Float> = pointOf(fc.mouthX, fc.mouthY)
+    fun head(): Pair<Float, Float> = pointOf(rig.w / 2f, fc.eyeY - 70f)
+    fun chest(): Pair<Float, Float> = pointOf(rig.w / 2f, rig.legY * 0.72f)
+    fun scale(): Float = if (width > 0) minOf(height / rig.h, width / rig.w) else 1f
 
     private fun bmp(name: String): Bitmap? = try {
         val id = resources.getIdentifier("${name}_${kid.id}", "drawable", context.packageName)
@@ -114,6 +150,8 @@ class CharacterView(ctx: Context, val kid: Kid) : View(ctx) {
             rect.set(0f, 0f, rig.w, rig.h)
             c.drawBitmap(it, null, rect, bmpPaint)
         }
+        // ---- تعبير الوجه أثناء استخدام الأداة ----
+        face?.let { drawFace(c, it, t) }
         // ---- الغرض المحمول أمام الصدر ----
         carrying?.let {
             emojiPaint.textSize = rig.w * 0.55f
@@ -121,5 +159,52 @@ class CharacterView(ctx: Context, val kid: Kid) : View(ctx) {
         }
         c.restore()
         c.restore()
+    }
+
+    private fun drawFace(c: Canvas, mode: String, t: Float) {
+        val mx = fc.mouthX; val my = fc.mouthY; val mw = fc.mouthW
+        when (mode) {
+            "teeth" -> {
+                // ابتسامة عريضة تظهر فيها الأسنان
+                val h = mw * 0.42f
+                rect.set(mx - mw * 0.62f, my - h * 0.55f, mx + mw * 0.62f, my + h * 0.55f)
+                fill.color = 0xFF8C2F39.toInt(); c.drawRoundRect(rect, h * 0.5f, h * 0.5f, fill)
+                rect.inset(mw * 0.06f, h * 0.12f)
+                fill.color = Color.WHITE; c.drawRoundRect(rect, h * 0.4f, h * 0.4f, fill)
+                line.color = 0xFFADB5BD.toInt(); line.strokeWidth = mw * 0.03f
+                c.drawLine(rect.left, rect.centerY(), rect.right, rect.centerY(), line)
+                for (i in 1..5) {
+                    val x = rect.left + rect.width() * i / 6f
+                    c.drawLine(x, rect.top + 2f, x, rect.bottom - 2f, line)
+                }
+                line.color = 0xFFC2555F.toInt(); line.strokeWidth = mw * 0.07f
+                rect.set(mx - mw * 0.62f, my - h * 0.55f, mx + mw * 0.62f, my + h * 0.55f)
+                c.drawRoundRect(rect, h * 0.5f, h * 0.5f, line)
+            }
+            "chew", "open" -> {
+                val open = if (mode == "chew") 0.08f + 0.30f * abs(sin(t * 2f)) else 0.34f
+                val w = mw * 0.34f; val h = mw * open
+                rect.set(mx - w, my - h * 0.5f, mx + w, my + h * 0.5f)
+                fill.color = 0xFF7A1F2B.toInt(); c.drawOval(rect, fill)
+                if (h > mw * 0.15f) {
+                    rect.set(mx - w * 0.6f, my, mx + w * 0.6f, my + h * 0.5f)
+                    fill.color = 0xFFE8737F.toInt(); c.drawOval(rect, fill)
+                }
+                line.color = 0xFFC2555F.toInt(); line.strokeWidth = mw * 0.06f
+                rect.set(mx - w, my - h * 0.5f, mx + w, my + h * 0.5f)
+                c.drawOval(rect, line)
+            }
+            "sleep" -> {
+                // جفون مغمضة بلون البشرة وخط نوم
+                for (ex in floatArrayOf(fc.eyeLX, fc.eyeRX)) {
+                    val r = fc.eyeR
+                    rect.set(ex - r * 1.35f, fc.eyeY - r * 1.05f, ex + r * 1.35f, fc.eyeY + r * 1.0f)
+                    fill.color = fc.skin; c.drawOval(rect, fill)
+                    line.color = 0xFF4A3426.toInt(); line.strokeWidth = r * 0.28f
+                    rect.set(ex - r * 1.05f, fc.eyeY - r * 0.7f, ex + r * 1.05f, fc.eyeY + r * 0.5f)
+                    c.drawArc(rect, 20f, 140f, false, line)
+                }
+            }
+        }
     }
 }

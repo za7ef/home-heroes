@@ -178,10 +178,10 @@ struct ParentView: View {
             }
             if reqs.count > 1 { Btn("اعتماد الكل", green, full: true) { reqs.forEach { approve($0) } } }
 
-            Text("الإعدادات").font(.system(size: 22, weight: .bold)).foregroundColor(orange).padding(.top, 14)
+            Text("الإدارة").font(.system(size: 22, weight: .bold)).foregroundColor(orange).padding(.top, 14)
             ForEach(Family.kids) { kid in Btn("✏️ مهام \(kid.name)", kid.color, full: true) { nav.show(.editChores(kid.id)) } }
             Btn("🎁 تعديل المكافآت", orange, full: true) { nav.show(.editRewards) }
-            MusicToggle()
+            Btn("⚙️ الإعدادات", gray, full: true) { nav.settingsBack = .parent; nav.show(.settings) }
             Menu {
                 ForEach(Family.kids) { kid in Button("\(kid.name) (⭐ \(store.points(kid.id)))") { delta = ""; pointsKid = kid } }
             } label: {
@@ -190,19 +190,6 @@ struct ParentView: View {
                     .background(RoundedRectangle(cornerRadius: 18).fill(blue))
             }
             Btn("🔑 تغيير الرمز السري", gray, full: true) { newPin = ""; askPin = true }
-            Btn("🔄 التحقق من التحديثات", gray, full: true) {
-                Task { @MainActor in
-                    do {
-                        let info = try await Updater.fetchLatest()
-                        if Updater.isNewer(info.version, Updater.localVersion) {
-                            store.skippedVersion = ""
-                            nav.flash("يوجد إصدار جديد \(info.version)")
-                            if let u = URL(string: info.url) { _ = await UIApplication.shared.open(u) }
-                        } else { nav.flash("الإصدار الحالي هو الأحدث (\(Updater.localVersion))") }
-                    } catch { nav.flash("تعذّر التحقق: \(error.localizedDescription)") }
-                }
-            }
-            Btn("ℹ️ حول التطبيق", gray, full: true) { nav.show(.about) }
             Btn("🗑️ تصفير النقاط", red, full: true) { askReset = true }
         }
         .alert("نقاط \(pointsKid?.name ?? "")", isPresented: Binding(get: { pointsKid != nil }, set: { if !$0 { pointsKid = nil } })) {
@@ -355,7 +342,7 @@ struct EditRewardsView: View {
 struct AboutView: View {
     @EnvironmentObject var nav: Nav
     var body: some View {
-        Page(title: "ℹ️ حول التطبيق", back: .parent) {
+        Page(title: "ℹ️ حول التطبيق", back: .settings) {
             Text("أبطال البيت").font(.system(size: 30, weight: .bold)).foregroundColor(orange).frame(maxWidth: .infinity)
             Text("الإصدار \(Updater.localVersion) (البناء \(Updater.localBuild))").font(.system(size: 20)).frame(maxWidth: .infinity)
             Text("لعبة مهام منزلية للأطفال: مهام يومية، نجوم ومستويات، مكافآت، واعتماد من الأهل. تعمل دون إنترنت.").padding(.vertical, 10)
@@ -378,15 +365,73 @@ struct TextPage: View {
     }
 }
 
-/** تشغيل أو إيقاف موسيقى الخلفية (أصوات الضغط والنجاح تبقى) */
-struct MusicToggle: View {
-    @State private var on = Sound.shared.musicOn
+/** الإعدادات: الصوت، الحوارات التلقائية، البحث عن تحديث، وحول التطبيق */
+struct SettingsView: View {
+    @EnvironmentObject var store: Store
+    @EnvironmentObject var nav: Nav
+    @State private var music = Sound.shared.musicOn
+    @State private var musicVol = Double(Settings.musicVol)
+    @State private var fx = Settings.fxOn
+    @State private var fxVol = Double(Settings.fxVol)
+    @State private var voice = Settings.voiceOn
+    @State private var voiceVol = Double(Settings.voiceVol)
+    @State private var talk = Settings.autoTalk
+    @State private var checking = false
+
     var body: some View {
-        Toggle(isOn: $on) {
-            Text("🎵 موسيقى الخلفية").font(.system(size: 20, weight: .bold))
+        Page(title: "⚙️ الإعدادات", back: nav.settingsBack) {
+            Text("الصوت").font(.system(size: 22, weight: .bold)).foregroundColor(orange)
+            row("🎵 موسيقى الخلفية", $music)
+            slider("مستوى الموسيقى", $musicVol)
+            row("🔔 أصوات المؤثرات", $fx)
+            slider("مستوى المؤثرات", $fxVol)
+            row("🗣️ أصوات الشخصيات", $voice)
+            slider("مستوى أصوات الشخصيات", $voiceVol)
+            Text("اللعب").font(.system(size: 22, weight: .bold)).foregroundColor(orange).padding(.top, 12)
+            row("💬 حوارات تلقائية بين الشخصيات", $talk)
+            Text("التطبيق").font(.system(size: 22, weight: .bold)).foregroundColor(orange).padding(.top, 12)
+            Btn(checking ? "⏳ جاري البحث…" : "🔄 البحث عن تحديث", blue, full: true) { checkUpdate() }
+            Btn("ℹ️ حول التطبيق", gray, full: true) { nav.show(.about) }
+            Text("الإصدار \(Updater.localVersion) (البناء \(Updater.localBuild))").foregroundColor(gray).frame(maxWidth: .infinity)
+        }
+        .onChange(of: music) { v in Sound.shared.musicOn = v }
+        .onChange(of: musicVol) { v in Settings.musicVol = Int(v); Sound.shared.applyVolumes() }
+        .onChange(of: fx) { v in Settings.fxOn = v }
+        .onChange(of: fxVol) { v in Settings.fxVol = Int(v); Sound.shared.applyVolumes() }
+        .onChange(of: voice) { v in Settings.voiceOn = v; if !v { Speaker.shared.stop() } }
+        .onChange(of: voiceVol) { v in Settings.voiceVol = Int(v) }
+        .onChange(of: talk) { v in Settings.autoTalk = v }
+    }
+
+    private func row(_ label: String, _ on: Binding<Bool>) -> some View {
+        Toggle(isOn: on) { Text(label).font(.system(size: 20, weight: .bold)) }
+            .padding(.horizontal, 16).padding(.vertical, 8)
+            .background(RoundedRectangle(cornerRadius: 18).fill(Color.white))
+    }
+
+    private func slider(_ label: String, _ v: Binding<Double>) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("\(label): \(Int(v.wrappedValue))%").font(.system(size: 17, weight: .bold)).foregroundColor(Color(hex: 0x495057))
+            Slider(value: v, in: 0...100, step: 1)
         }
         .padding(.horizontal, 16).padding(.vertical, 8)
         .background(RoundedRectangle(cornerRadius: 18).fill(Color.white))
-        .onChange(of: on) { v in Sound.shared.musicOn = v }
+    }
+
+    /** البحث عن إصدار أحدث في GitHub؛ في الآيفون يفتح صفحة الإصدار لأن التطبيق المثبت يدويًا لا يحدّث نفسه */
+    private func checkUpdate() {
+        guard !checking else { return }
+        checking = true
+        Task { @MainActor in
+            defer { checking = false }
+            do {
+                let info = try await Updater.fetchLatest()
+                if Updater.isNewer(info.version, Updater.localVersion) {
+                    store.skippedVersion = ""
+                    nav.flash("يوجد إصدار جديد \(info.version)")
+                    if let u = URL(string: info.url) { _ = await UIApplication.shared.open(u) }
+                } else { nav.flash("الإصدار الحالي هو الأحدث (\(Updater.localVersion))") }
+            } catch { nav.flash("تعذّر التحقق: \(error.localizedDescription)") }
+        }
     }
 }

@@ -39,13 +39,22 @@ class Sound(ctx: Context) {
         Thread {
             try {
                 val m = track(makeMusic(), loop = true)
-                m.setVolume(0.22f)
+                m.setVolume(musicLevel())
                 val made = mapOf(
                     "tap" to track(makeNotes(listOf(1046.5 to 0.06), 0)),
                     "pick" to track(makeNotes(listOf(659.3 to 0.06, 880.0 to 0.07), 0)),
                     "success" to track(makeNotes(listOf(523.3 to 0.10, 659.3 to 0.10, 784.0 to 0.10, 1046.5 to 0.28), 1)),
                     "wrong" to track(makeNotes(listOf(392.0 to 0.14, 311.1 to 0.22), 1)),
+                    "brush" to track(makeNoise(0.14, 18.0, 0.55, 0.35)),
+                    "bite" to track(makeNoise(0.08, 40.0, 0.25, 0.6)),
+                    "gulp" to track(makeSweep(320.0, 140.0, 0.12, 0.5)),
+                    "bubble" to track(makeSweep(500.0, 1300.0, 0.07, 0.35)),
+                    "splash" to track(makeNoise(0.35, 7.0, 0.7, 0.3)),
+                    "flush" to track(makeNoise(0.9, 3.0, 0.85, 0.35)),
+                    "boing" to track(makeSweep(180.0, 520.0, 0.18, 0.5)),
+                    "zoom" to track(makeSweep(260.0, 620.0, 0.22, 0.3)),
                 )
+                made.values.forEach { it.setVolume(fxLevel()) }
                 synchronized(this) {
                     if (released) {
                         m.release(); made.values.forEach { it.release() }
@@ -75,6 +84,45 @@ class Sound(ctx: Context) {
         t.write(data, 0, data.size)
         if (loop) t.setLoopPoints(0, data.size, -1)
         return t
+    }
+
+    private fun musicLevel(): Float = 0.36f * Settings.musicVol / 100f
+    private fun fxLevel(): Float = Settings.fxVol / 100f
+
+    /** يطبّق مستويات الصوت بعد تغييرها من الإعدادات */
+    fun applyVolumes() {
+        try { music?.setVolume(musicLevel()) } catch (_: Exception) {}
+        fx.values.forEach { try { it.setVolume(fxLevel()) } catch (_: Exception) {} }
+    }
+
+    /** ضجيج مُنعَّم (فرشاة، ماء، قضمة): decay سرعة التلاشي، smooth بين 0 و1 كلما زاد صار الصوت أنعم */
+    private fun makeNoise(dur: Double, decay: Double, smooth: Double, amp: Double): ShortArray {
+        val n = (dur * rate).toInt()
+        val out = ShortArray(n)
+        val rnd = java.util.Random(7)
+        var y = 0.0
+        for (k in 0 until n) {
+            val t = k.toDouble() / rate
+            y = smooth * y + (1 - smooth) * (rnd.nextDouble() * 2 - 1)
+            val env = min(1.0, t / 0.01) * exp(-decay * t)
+            out[k] = (y * env * amp * 2.2 * Short.MAX_VALUE).toInt().coerceIn(-32767, 32767).toShort()
+        }
+        return out
+    }
+
+    /** نغمة تنزلق من تردد لآخر (فقاعة، بلعة، نطة) */
+    private fun makeSweep(f0: Double, f1: Double, dur: Double, amp: Double): ShortArray {
+        val n = (dur * rate).toInt()
+        val out = ShortArray(n)
+        var ph = 0.0
+        for (k in 0 until n) {
+            val t = k.toDouble() / rate
+            val f = f0 + (f1 - f0) * (t / dur)
+            ph += 2 * PI * f / rate
+            val env = min(1.0, t / 0.005) * exp(-4.0 * t / dur)
+            out[k] = (sin(ph) * env * amp * Short.MAX_VALUE).toInt().coerceIn(-32767, 32767).toShort()
+        }
+        return out
     }
 
     /** نغمات متتالية: wave 0 = جيبية ناعمة، 1 = مثلثية خفيفة */
@@ -136,6 +184,7 @@ class Sound(ctx: Context) {
     }
 
     private fun play(name: String) {
+        if (!Settings.fxOn) return
         val t = fx[name] ?: return
         try {
             if (t.playState == AudioTrack.PLAYSTATE_PLAYING) t.stop()
@@ -149,6 +198,8 @@ class Sound(ctx: Context) {
     fun pickUp() = play("pick")
     fun success() = play("success")
     fun wrong() = play("wrong")
+    /** صوت مؤثر باسمه: brush، bite، gulp، bubble، splash، flush، boing، zoom */
+    fun effect(name: String) = play(name)
 
     fun release() {
         synchronized(this) {

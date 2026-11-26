@@ -93,13 +93,17 @@ final class Speaker {
               let p = try? AVAudioPlayer(contentsOf: url) else { return false }
         player?.stop()
         player = p
+        p.volume = Float(Settings.voiceVol) / 100
         p.play()
         return true
     }
 
     /** يشغّل المقطع المسجّل فقط؛ العبارة غير المسجّلة تظهر نصًا بلا صوت */
     func say(_ s: String, as who: String? = nil) {
+        guard Settings.voiceOn else { player?.stop(); return }
         if playRecorded(s, who) { return }
         player?.stop()
     }
+
+    func stop() { player?.stop() }
 }

@@ -9,6 +9,7 @@ enum Screen: Equatable {
     case editChores(String)
     case editRewards
     case about
+    case settings
     case text(String, String)
 }
 
@@ -17,6 +18,8 @@ final class Nav: ObservableObject {
     @Published var celebrating: Kid? = nil
     @Published var toast: String? = nil
     @Published var gate = false
+    /** الشاشة التي يرجع لها زر الرجوع في الإعدادات */
+    var settingsBack: Screen = .home
 
     func show(_ s: Screen) { withAnimation(.easeInOut(duration: 0.2)) { screen = s } }
 
@@ -69,6 +72,7 @@ struct RootView: View {
                 case .editChores(let id): EditChoresView(kid: Family.byId(id))
                 case .editRewards: EditRewardsView()
                 case .about: AboutView()
+                case .settings: SettingsView()
                 case .text(let t, let b): TextPage(title: t, body: b)
                 }
             }
