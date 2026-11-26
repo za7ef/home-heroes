@@ -66,7 +66,6 @@ enum RoomItems {
  */
 final class Speaker {
     static let shared = Speaker()
-    private let synth = AVSpeechSynthesizer()
     private var player: AVAudioPlayer?
     private var byKey: [String: [String: String]] = [:]
 
@@ -98,13 +97,9 @@ final class Speaker {
         return true
     }
 
+    /** يشغّل المقطع المسجّل فقط؛ العبارة غير المسجّلة تظهر نصًا بلا صوت */
     func say(_ s: String, as who: String? = nil) {
-        synth.stopSpeaking(at: .immediate)
         if playRecorded(s, who) { return }
         player?.stop()
-        let u = AVSpeechUtterance(string: s)
-        u.voice = AVSpeechSynthesisVoice(language: "ar-SA")
-        u.rate = AVSpeechUtteranceDefaultSpeechRate * 0.9
-        synth.speak(u)
     }
 }

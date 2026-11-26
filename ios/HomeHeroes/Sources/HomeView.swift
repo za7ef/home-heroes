@@ -18,7 +18,7 @@ final class Chatter: ObservableObject {
         }
     }
 
-    /** فقاعة مع صوت الشخصية (المقطع المسجل إن وُجد، وإلا صوت الجهاز) */
+    /** فقاعة مع صوت الشخصية (المقطع المسجل فقط) */
     func talk(_ kid: String, _ s: String) {
         guard !s.isEmpty else { return }
         say(kid, s)

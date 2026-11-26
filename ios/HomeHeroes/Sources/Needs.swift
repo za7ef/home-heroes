@@ -63,21 +63,10 @@ enum Needs {
             default: return ["هييه! 🎉", "لعب! 🙌"].randomElement()!
             }
         }
-        return fem(kid, olderReact(m))
+        return effect(m)
     }
 
-    private static func olderReact(_ m: String) -> String {
-        switch m {
-        case "hunger": return ["يمي، لذيذ! 😋", "شكراً، شبعت 😊", "الحمد لله 🤲"].randomElement()!
-        case "clean": return ["صرت نظيف! ✨", "ريحتي حلوة 🧼", "أسناني تلمع! 😁"].randomElement()!
-        case "sleep": return ["ارتحت مرة 😌", "تصبحون على خير 😴", "نمت نومة حلوة 🌙"].randomElement()!
-        case "toilet": return ["ارتحت! 😌", "غسلت يدي بعد 🧼"].randomElement()!
-        case "health": return ["صرت أحسن، الحمد لله 💪", "شكراً، راح التعب 😊"].randomElement()!
-        default: return ["هذا ممتع! 🎉", "مرة وناسة! 😄", "نلعب مرة ثانية؟ 🙌"].randomElement()!
-        }
-    }
-
-    static func full(_ kid: Kid) -> String { kid.toddler ? "خلاص! 🙅" : "خلاص، يكفي! 😅" }
+    static func full(_ kid: Kid) -> String { kid.toddler ? "خلاص! 🙅" : "🙅" }
 
     /** عبارة الاحتياج من مجموعة عباراته، بخلط بلا تكرار محفوظ بين الجلسات */
     static func needLine(_ store: Store, _ kid: Kid, _ m: Meter) -> String {
@@ -86,7 +75,4 @@ enum Needs {
         return pool[store.nextFromPool("\(kid.id)_\(m.id)", pool.count)]
     }
 
-    private static func fem(_ kid: Kid, _ s: String) -> String {
-        kid.id == "layan" ? s.replacingOccurrences(of: "نظيف", with: "نظيفة").replacingOccurrences(of: "جوعان", with: "جوعانة") : s
-    }
 }
