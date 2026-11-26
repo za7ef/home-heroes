@@ -51,6 +51,12 @@ struct CharacterFigure: View {
     var bend: CGFloat = 0
     /** تعبير الوجه أثناء استخدام أداة: teeth، chew، open، sleep أو nil */
     var face: String? = nil
+    /** وضعية الرسم: front أمام، side جانب، back ظهر، crawl حبو (أيان) */
+    var pose: String = "front"
+    /** اتجاه الوجه في الوضعية الجانبية: 1 يمين، -1 يسار */
+    var facing: CGFloat = 1
+    /** مرفوع بالإصبع: يتأرجح شوي */
+    var held: Bool = false
 
     var body: some View {
         TimelineView(.animation) { tl in
@@ -62,6 +68,12 @@ struct CharacterFigure: View {
     private func draw(_ c: GraphicsContext, _ size: CGSize, _ t: CGFloat) {
         let rig = Rig.of(kid.id)
         guard size.width > 0, size.height > 0 else { return }
+        switch pose {
+        case "crawl": drawCrawl(c, size, t); return
+        case "side": drawFlat(c, size, t, "side_\(kid.id).png", flip: facing < 0); return
+        case "back": drawFlat(c, size, t, "back_\(kid.id).png", flip: false); return
+        default: break
+        }
         let s = min(size.height / rig.h, size.width / rig.w)
         var g = c
         g.translateBy(x: (size.width - rig.w * s) / 2, y: size.height - rig.h * s)
@@ -86,7 +98,7 @@ struct CharacterFigure: View {
         var b = g
         b.translateBy(x: 0, y: bob + bend * rig.h * 0.05)
         b.translateBy(x: rig.w / 2, y: rig.legY)
-        b.rotate(by: .degrees(Double(bend * 10 + swing * 2)))
+        b.rotate(by: .degrees(Double(bend * 10 + swing * 2 + (held ? sin(t) * 5 : 0))))
         b.translateBy(x: -rig.w / 2, y: -rig.legY)
         b.draw(b.resolve(Image(uiImage: image("body_\(kid.id).png")).resizable()),
                in: CGRect(x: 0, y: 0, width: rig.w, height: rig.h))
@@ -102,6 +114,39 @@ struct CharacterFigure: View {
 }
 
 extension CharacterFigure {
+    /** صورة جانبية أو خلفية كاملة: المشي بهزة ونطة خفيفة بدل تحريك الرجلين */
+    fileprivate func drawFlat(_ c: GraphicsContext, _ size: CGSize, _ t: CGFloat, _ name: String, flip: Bool) {
+        let img = image(name)
+        guard img.size.width > 0, img.size.height > 0 else { return }
+        let s = min(size.height / img.size.height, size.width / img.size.width)
+        let w = img.size.width * s, h = img.size.height * s
+        let bob: CGFloat = walking ? -abs(sin(t * 2)) * h * 0.025 : sin(t) * h * 0.004
+        let squash: CGFloat = walking ? 1 - abs(sin(t * 2)) * 0.03 : 1
+        var g = c
+        g.translateBy(x: size.width / 2, y: size.height)
+        if flip { g.scaleBy(x: -1, y: 1) }
+        if held { g.translateBy(x: 0, y: -h); g.rotate(by: .degrees(Double(sin(t) * 6))); g.translateBy(x: 0, y: h) }
+        g.scaleBy(x: 1, y: squash)
+        g.draw(g.resolve(Image(uiImage: img).resizable()), in: CGRect(x: -w / 2, y: -h + bob, width: w, height: h))
+        if let item = carrying {
+            c.draw(Text(item).font(.system(size: w * 0.5)), at: CGPoint(x: size.width / 2 + (flip ? -w : w) * 0.3, y: size.height - h * 0.42))
+        }
+    }
+
+    /** أيان يحبو ويدف سيارته */
+    fileprivate func drawCrawl(_ c: GraphicsContext, _ size: CGSize, _ t: CGFloat) {
+        let img = image("crawl_\(kid.id).png")
+        guard img.size.width > 0, img.size.height > 0 else { return }
+        let s = min(size.height * 0.5 / img.size.height, size.width / img.size.width)
+        let w = img.size.width * s, h = img.size.height * s
+        let lift: CGFloat = walking ? abs(sin(t * 2)) * h * 0.03 : 0
+        var g = c
+        g.translateBy(x: size.width / 2, y: size.height)
+        if facing < 0 { g.scaleBy(x: -1, y: 1) }
+        if walking { g.rotate(by: .degrees(Double(sin(t * 2) * 2.5))) }
+        g.draw(g.resolve(Image(uiImage: img).resizable()), in: CGRect(x: -w / 2, y: -h - lift, width: w, height: h))
+    }
+
     fileprivate func drawFace(_ g: GraphicsContext, _ mode: String, _ t: CGFloat) {
         let fc = Face.of(kid.id)
         let mx = fc.mouthX, my = fc.mouthY, mw = fc.mouthW

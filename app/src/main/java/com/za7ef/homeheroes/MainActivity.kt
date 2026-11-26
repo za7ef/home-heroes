@@ -107,6 +107,7 @@ class MainActivity : Activity() {
     private fun screen(title: String, onBack: (() -> Unit)?, build: (LinearLayout) -> Unit) {
         stopTalk()
         overlay = null
+        roomScene = null
         charViews.clear()
         back = onBack
         val root = vbox().apply { setBackgroundColor(bg); fitsSystemWindows = true }
@@ -157,6 +158,7 @@ class MainActivity : Activity() {
         stopTalk()
         back = onBack
         charViews.clear()
+        roomScene = null
         val frame = FrameLayout(this).apply {
             setBackgroundColor(bg)
             // يبقى المحتوى داخل المنطقة الآمنة (بعيد عن النوتش وأشرطة النظام)
@@ -371,8 +373,10 @@ class MainActivity : Activity() {
 
     private fun talkOnce() {
         if (!Settings.autoTalk) return
+        val busy = roomScene?.activeIds.orEmpty()
         val together = Talk.convos.filter {
-            charViews.containsKey(it.a) && charViews.containsKey(it.b) && store.kidRoom(it.a) == store.kidRoom(it.b)
+            charViews.containsKey(it.a) && charViews.containsKey(it.b) && store.kidRoom(it.a) == store.kidRoom(it.b) &&
+                it.a !in busy && it.b !in busy && convoFits(it)
         }
         if (System.currentTimeMillis() < talkBusyUntil) return
         if (together.isNotEmpty() && Math.random() < 0.75) {
@@ -384,12 +388,23 @@ class MainActivity : Activity() {
             }
             talkBusyUntil = System.currentTimeMillis() + c.lines.size * 2600L + 500
         } else {
-            val kid = Family.kids.filter { charViews.containsKey(it.id) }.randomOrNull() ?: return
+            val kid = Family.kids.filter { charViews.containsKey(it.id) && it.id !in busy }.randomOrNull() ?: return
             val v = charViews[kid.id] ?: return
-            val line = Talk.solo(kid, store.kidRoom(kid.id)).random()
+            val line = soloLine(kid, store.kidRoom(kid.id))
             bubble(v, line); speak(line, kid.id)
         }
     }
+
+    /** الحوار اللي يذكر احتياج (أكل، نظافة، صحة، نوم) ما يصير إلا لما يكون مؤشره تحت الحد عند واحد منهم */
+    private fun convoFits(c: Convo): Boolean =
+        c.lines.flatMap { Acts.needsOf(it) }.distinct().all { m -> minOf(store.need(c.a, m), store.need(c.b, m)) < Needs.LOW }
+
+    /** عبارة عشوائية تناسب الغرفة، بدون عبارات احتياج ما لها داعي */
+    private fun soloLine(kid: Kid, room: String): String =
+        Talk.solo(kid, room).filter { Acts.fits(store, kid.id, it) }.randomOrNull()
+            ?: if (kid.toddler) listOf("هييه! 🎉", "سلام! 👋", "يلا!").random() else "😊"
+
+    private var roomScene: RoomScene? = null
 
     // ---------------- داخل الغرفة ----------------
 
@@ -401,8 +416,9 @@ class MainActivity : Activity() {
                 this, room.id, room.bg, here, store,
                 say = { v, s -> bubble(v, s) },
                 speak = { text, who -> speak(text, who) },
-                onKidTap = { kid, v -> val line = Talk.solo(kid, room.id).random(); bubble(v, line); speak(line, kid.id) },
+                onKidTap = { kid, v -> val line = soloLine(kid, room.id); bubble(v, line); speak(line, kid.id) },
             )
+            roomScene = scene
             frame.addView(scene, FrameLayout.LayoutParams(MATCH, MATCH))
             scene.post { charViews.putAll(scene.chars) }
             main.postDelayed({ charViews.putAll(scene.chars) }, 400)

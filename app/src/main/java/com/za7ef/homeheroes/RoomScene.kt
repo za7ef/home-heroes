@@ -13,6 +13,9 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import kotlin.math.abs
 import kotlin.math.hypot
 
 /**
@@ -151,8 +154,20 @@ class RoomScene(
         addView(bg, lp(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
     }
 
-    override fun onAttachedToWindow() { super.onAttachedToWindow(); postDelayed(ticker, 4000) }
-    override fun onDetachedFromWindow() { removeCallbacks(ticker); super.onDetachedFromWindow() }
+    /** كل 8 إلى 15 ثانية طفل فاضي يسوي نشاط يناسب الغرفة */
+    private val idle = object : Runnable {
+        override fun run() {
+            idleTick()
+            postDelayed(this, (8000L..15000L).random())
+        }
+    }
+
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); postDelayed(ticker, 4000); postDelayed(idle, 5000) }
+    override fun onDetachedFromWindow() {
+        removeCallbacks(ticker); removeCallbacks(idle)
+        moves.values.toList().forEach { it.cancel() }
+        super.onDetachedFromWindow()
+    }
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         super.onSizeChanged(w, h, ow, oh)
@@ -183,19 +198,11 @@ class RoomScene(
             val v = CharacterView(context, kid)
             addView(v, lp(cw.toInt(), ch.toInt()))
             val fx = (idx + 1f) / (n + 1f)
+            trayHpx = trayH
             v.x = fx * w - cw / 2f
             v.y = h - trayH - dp(2f) - ch
-            v.setOnClickListener {
-                Sound.current?.tap()
-                selected = kid.id
-                refreshMeters()
-                bounce(v)
-                val low = Needs.lowest(store, kid.id)
-                if (low != null) {
-                    val line = Needs.needLine(store, kid, low)
-                    say(v, line); speak(line, kid.id)
-                } else onKidTap(kid, v)
-            }
+            v.translationZ = (v.y + ch) * 0.002f
+            dragKid(v)
             chars[kid.id] = v
 
             val icon = TextView(context).apply {
@@ -207,7 +214,7 @@ class RoomScene(
             addView(icon, lp(dp(48f).toInt(), dp(48f).toInt()))
             icon.x = v.x + cw / 2f - dp(24f)
             icon.y = (v.y - dp(52f)).coerceAtLeast(dp(60f))
-            icon.setOnClickListener { v.performClick() }
+            icon.setOnClickListener { tapKid(v) }
             needIcons[kid.id] = icon
         }
 
@@ -243,7 +250,7 @@ class RoomScene(
             val row = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
             row.addView(TextView(context).apply { text = m.emoji; textSize = 15f })
             val track = FrameLayout(context).apply { background = rounded(0xFFDEE2E6.toInt(), dp(5f)) }
-            val color = if (v < Needs.LOW) 0xFFE03131.toInt() else if (v < 65f) 0xFFF59F00.toInt() else 0xFF2F9E44.toInt()
+            val color = if (v < Needs.LOW) 0xFFE03131.toInt() else if (v < 80f) 0xFFF59F00.toInt() else 0xFF2F9E44.toInt()
             track.addView(View(context).apply { background = rounded(color, dp(5f)) },
                 LayoutParams((dp(46f) * (v / 100f)).toInt().coerceAtLeast(dp(4f).toInt()), LayoutParams.MATCH_PARENT, Gravity.LEFT))
             row.addView(track, LinearLayout.LayoutParams(dp(46f).toInt(), dp(10f).toInt()).apply { leftMargin = dp(4f).toInt() })
@@ -399,6 +406,7 @@ class RoomScene(
             gr.engaged = true
             selected = hit.kid.id
             refreshMeters()
+            cancelAct(hit)
             if (busy.contains(hit.kid.id)) return
             if (store.need(hit.kid.id, tool.meter) >= 95f) {
                 if (!gr.warned) {
@@ -650,7 +658,9 @@ class RoomScene(
         store.addNeed(kid.id, tool.meter, tool.amount)
         busy.remove(kid.id)
         Sound.current?.success()
-        val line = Needs.react(kid, tool.meter)
+        // عبارة تناسب المهمة اللي خلصت (أكل، تفريش، دش، لعب...)
+        val line = Acts.doneLine(kid, tool.kind) ?: Needs.react(kid, tool.meter)
+        bounce(cv)
         say(cv, line); speak(line, kid.id)
         // أثر فوق الرأس
         repeat(3) { i ->
@@ -661,6 +671,227 @@ class RoomScene(
             e.animate().translationYBy(-dp(70f)).alpha(0f).setStartDelay(i * 120L).setDuration(900).withEndAction { removeView(e) }.start()
         }
         refreshNeeds()
+    }
+
+    // ---------------- حركة الشخصيات: المشي والأنشطة والسحب ----------------
+
+    private var trayHpx = 0f
+    private val moves = mutableMapOf<String, ValueAnimator>()
+    private val acting = mutableSetOf<String>()
+    private val actGen = mutableMapOf<String, Int>()
+    private var dragging: String? = null
+
+    /** الأطفال المشغولين بنشاط أو مسحوبين: ما يدخلون في السوالف العشوائية */
+    val activeIds: Set<String> get() = acting + listOfNotNull(dragging)
+
+    /** حدود الأرضية (مكان القدمين) على الشاشة */
+    private fun floorBand(): Pair<Float, Float> {
+        val b = height - trayHpx - dp(2f)
+        val t = offY + art.floorTop * art.ih * scale
+        return (if (t < b - dp(10f)) t + (b - t) * 0.1f else b) to b
+    }
+
+    private fun widthOf(cv: CharacterView) = cv.layoutParams.width.toFloat()
+    private fun heightOf(cv: CharacterView) = cv.layoutParams.height.toFloat()
+
+    /** يضع الشخصية بمنتصفها وقدميها، والأقرب للشاشة يرسم فوق */
+    private fun place(cv: CharacterView, cx: Float, feet: Float) {
+        val cw = widthOf(cv); val ch = heightOf(cv)
+        cv.x = cx - cw / 2f
+        cv.y = feet - ch
+        cv.translationZ = feet * 0.002f
+        needIcons[cv.kid.id]?.let { it.x = cx - dp(24f); it.y = (cv.y - dp(52f)).coerceAtLeast(dp(60f)) }
+        bars[cv.kid.id]?.first?.let { if (it.visibility == View.VISIBLE) { it.x = cx - dp(42f); it.y = (cv.y - dp(18f)).coerceAtLeast(dp(4f)) } }
+    }
+
+    private fun stopMove(cv: CharacterView) {
+        moves.remove(cv.kid.id)?.cancel()
+        cv.walking = false
+    }
+
+    /** مشي واقعي: جانبي لما يمشي يمين أو يسار، ظهر لما يبعد، ووجه لما يقرب */
+    private fun walkTo(cv: CharacterView, tx: Float, tf: Float, crawl: Boolean, done: () -> Unit) {
+        stopMove(cv)
+        val sx = cv.x + widthOf(cv) / 2f
+        val sf = cv.y + heightOf(cv)
+        val dx = tx - sx; val dy = tf - sf
+        val dist = hypot(dx, dy)
+        if (dist < dp(6f)) { done(); return }
+        cv.pose = when {
+            crawl -> "crawl"
+            abs(dx) >= abs(dy) * 0.8f -> "side"
+            dy < 0 -> "back"
+            else -> "front"
+        }
+        if (abs(dx) > dp(2f)) cv.facing = if (dx < 0) -1f else 1f
+        cv.walking = true
+        val speed = if (crawl) dp(70f) else dp(120f)
+        val a = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = (dist / speed * 1000f).toLong().coerceIn(300L, 7000L)
+            interpolator = LinearInterpolator()
+            addUpdateListener { val f = it.animatedValue as Float; place(cv, sx + dx * f, sf + dy * f) }
+            addListener(object : AnimatorListenerAdapter() {
+                var cancelled = false
+                override fun onAnimationCancel(animation: Animator) { cancelled = true }
+                override fun onAnimationEnd(animation: Animator) {
+                    cv.walking = false
+                    if (moves[cv.kid.id] === animation) moves.remove(cv.kid.id)
+                    if (!cancelled) done()
+                }
+            })
+        }
+        moves[cv.kid.id] = a
+        a.start()
+    }
+
+    private fun idleTick() {
+        if (!built || grip != null || width == 0) return
+        val free = chars.values.filter { it.kid.id !in acting && it.kid.id != dragging }
+        val cv = free.randomOrNull() ?: return
+        val acts = Acts.forKid(store, cv.kid, roomId)
+        val act = acts.randomOrNull()
+        if (act == null) {
+            // ما فيه نشاط: يتمشى لمكان ثاني
+            val (top, bot) = floorBand()
+            val half = widthOf(cv) / 2f
+            val id = cv.kid.id
+            acting.add(id)
+            val g = (actGen[id] ?: 0) + 1; actGen[id] = g
+            walkTo(cv, rnd(half, width - half), rnd(top, bot), false) { if (actGen[id] == g) endAct(cv) }
+            return
+        }
+        runAct(cv, act)
+    }
+
+    private fun runAct(cv: CharacterView, act: Act) {
+        val id = cv.kid.id
+        acting.add(id)
+        val g = (actGen[id] ?: 0) + 1; actGen[id] = g
+        fun ok() = actGen[id] == g && cv.isAttachedToWindow
+        val (top, bot) = floorBand()
+        val crawl = act.pose == "crawl"
+        val half = widthOf(cv) / 2f
+        val w = width.toFloat()
+        val tx = ((if (act.fx < 0f) rnd(0.15f, 0.85f) else act.fx) * w).coerceIn(half, w - half)
+        val tf = if (act.fx < 0f) rnd(top, bot) else top + (bot - top) * 0.12f
+        walkTo(cv, tx, tf, crawl) {
+            if (!ok()) return@walkTo
+            if (act.pre > 0) cv.pose = "back" // يدور للرف أو الثلاجة يطلع الغرض
+            postDelayed({
+                if (!ok()) return@postDelayed
+                cv.pose = act.pose
+                cv.carrying = act.prop
+                cv.face = act.face
+                val pool = act.lines[Acts.group(cv.kid)].orEmpty()
+                val line = pool[store.nextFromPool("act_${id}_${act.id}", pool.size)]
+                say(cv, line); speak(line, id)
+                act.meter?.let { store.addNeed(id, it, 15f); refreshNeeds() }
+                repeat(5) { i ->
+                    postDelayed({
+                        if (!ok()) return@postDelayed
+                        if (act.id == "read") cv.carrying = if (i % 2 == 0) "📖" else "📃" // تقليب الصفحات
+                        particle(act.parts.random(), cv.x + widthOf(cv) / 2f + rnd(-dp(30f), dp(30f)), cv.y + heightOf(cv) * 0.25f,
+                            20f, rnd(-dp(25f), dp(25f)), -dp(50f), 1000)
+                    }, 300L + i * 800L)
+                }
+                if (crawl) {
+                    // يكمل الحبو ويدف السيارة لمكان ثاني
+                    postDelayed({
+                        if (!ok()) return@postDelayed
+                        walkTo(cv, rnd(half, w - half), rnd(top, bot), true) { if (ok()) endAct(cv) }
+                    }, 900)
+                } else postDelayed({ if (ok()) endAct(cv) }, 4500)
+            }, act.pre)
+        }
+    }
+
+    private fun endAct(cv: CharacterView) {
+        acting.remove(cv.kid.id)
+        cv.carrying = null
+        cv.face = null
+        cv.pose = "front"
+    }
+
+    /** يوقف أي نشاط: لما يلمسه الطفل أو يسحبه أو يستخدم عليه أداة */
+    private fun cancelAct(cv: CharacterView) {
+        actGen[cv.kid.id] = (actGen[cv.kid.id] ?: 0) + 1
+        stopMove(cv)
+        endAct(cv)
+    }
+
+    /** لمسة: يلتفت للأمام وينط ويتكلم */
+    private fun tapKid(v: CharacterView) {
+        val kid = v.kid
+        cancelAct(v)
+        Sound.current?.tap()
+        selected = kid.id
+        refreshMeters()
+        bounce(v)
+        val low = Needs.lowest(store, kid.id)
+        if (low != null) {
+            val line = Needs.needLine(store, kid, low)
+            say(v, line); speak(line, kid.id)
+        } else onKidTap(kid, v)
+    }
+
+    /** الطفل ينسحب لأي مكان، ولما ينترك ينزل على الأرضية */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun dragKid(v: CharacterView) {
+        var downX = 0f; var downY = 0f; var sx = 0f; var sf = 0f; var dragged = false
+        v.setOnTouchListener { _, ev ->
+            val loc = IntArray(2); getLocationOnScreen(loc)
+            val px = ev.rawX - loc[0]; val py = ev.rawY - loc[1]
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    if (grip != null) return@setOnTouchListener false
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    downX = px; downY = py; dragged = false
+                    sx = v.x + widthOf(v) / 2f; sf = v.y + heightOf(v)
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (!dragged && hypot(px - downX, py - downY) > dp(12f)) {
+                        dragged = true
+                        cancelAct(v)
+                        dragging = v.kid.id
+                        v.held = true
+                        Sound.current?.pickUp()
+                    }
+                    if (dragged) {
+                        val half = widthOf(v) / 2f
+                        place(v, (sx + px - downX).coerceIn(half, width - half),
+                            (sf + py - downY).coerceIn(heightOf(v) * 0.5f, height.toFloat()))
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (dragged) {
+                        v.held = false
+                        dragging = null
+                        dropKid(v)
+                    } else if (ev.actionMasked == MotionEvent.ACTION_UP) tapKid(v)
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun dropKid(v: CharacterView) {
+        val (top, bot) = floorBand()
+        val cx = v.x + widthOf(v) / 2f
+        val f0 = v.y + heightOf(v)
+        val f1 = f0.coerceIn(top, bot)
+        val a = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 260
+            addUpdateListener { place(v, cx, f0 + (f1 - f0) * (it.animatedValue as Float)) }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) { bounce(v) }
+            })
+        }
+        moves[v.kid.id]?.cancel()
+        moves[v.kid.id] = a
+        a.start()
     }
 
     private fun bounce(v: View) {

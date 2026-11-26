@@ -25,13 +25,13 @@ final class Chatter: ObservableObject {
         Speaker.shared.say(s, as: kid)
     }
 
-    func start(visible: @escaping () -> [Kid], roomOf: @escaping (String) -> String) {
+    func start(store: Store, visible: @escaping () -> [Kid], roomOf: @escaping (String) -> String) {
         stop()
         timer = Timer.scheduledTimer(withTimeInterval: 7, repeats: true) { [weak self] _ in
             guard let self = self, Settings.autoTalk else { return }
             let vis = visible()
             let ids = Set(vis.map { $0.id })
-            let together = Talk.convos.filter { ids.contains($0.a) && ids.contains($0.b) && roomOf($0.a) == roomOf($0.b) }
+            let together = Talk.convos.filter { ids.contains($0.a) && ids.contains($0.b) && roomOf($0.a) == roomOf($0.b) && Acts.convoFits(store, $0) }
             if self.busyUntil > Date() { return }
             if let c = together.randomElement(), Double.random(in: 0...1) < 0.75 {
                 // حوار متناوب: كل سطر بعد اللي قبله، والمؤقت لا يبدأ حوارًا جديدًا قبل نهايته
@@ -44,7 +44,7 @@ final class Chatter: ObservableObject {
                 }
                 self.busyUntil = Date().addingTimeInterval(Double(c.lines.count) * 2.6 + 0.5)
             } else if let k = vis.randomElement() {
-                self.talk(k.id, Talk.solo(k, roomOf(k.id)).randomElement() ?? "")
+                self.talk(k.id, Acts.soloLine(store, k, roomOf(k.id)))
             }
         }
     }
@@ -88,7 +88,7 @@ struct HomeView: View {
         }
         .onAppear {
             if store.checkFamilyBonus() { nav.flash("🎉 العيلة كلها فازت بتحدي اليوم! +10 لكل واحد") }
-            chat.start(visible: { Family.kids }, roomOf: { store.kidRoom($0) })
+            chat.start(store: store, visible: { Family.kids }, roomOf: { store.kidRoom($0) })
         }
         .onDisappear { chat.stop() }
     }

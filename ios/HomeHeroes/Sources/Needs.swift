@@ -17,15 +17,16 @@ struct ToolUse { let rub: Double; let hold: Double; let face: String? }
  أدوات كل غرفة ترفع مؤشرًا واحدًا.
  */
 enum Needs {
-    static let low = 35.0
+    /** حد الاحتياج: تحته تظهر أيقونة الاحتياج وعباراته */
+    static let low = 60.0
 
     static let meters: [Meter] = [
-        Meter(id: "hunger", emoji: "🍎", name: "الأكل", perHour: 14, room: "kitchen"),
-        Meter(id: "clean", emoji: "🛁", name: "النظافة", perHour: 9, room: "bath"),
-        Meter(id: "sleep", emoji: "😴", name: "النوم", perHour: 7, room: "bedroom"),
-        Meter(id: "fun", emoji: "⚽", name: "اللعب", perHour: 18, room: "living"),
-        Meter(id: "toilet", emoji: "🚽", name: "الحمام", perHour: 12, room: "bath"),
-        Meter(id: "health", emoji: "🤒", name: "الصحة", perHour: 3, room: "bedroom"),
+        Meter(id: "hunger", emoji: "🍎", name: "الأكل", perHour: 1350, room: "kitchen"),
+        Meter(id: "clean", emoji: "🛁", name: "النظافة", perHour: 1100, room: "bath"),
+        Meter(id: "sleep", emoji: "😴", name: "النوم", perHour: 950, room: "bedroom"),
+        Meter(id: "fun", emoji: "⚽", name: "اللعب", perHour: 1300, room: "living"),
+        Meter(id: "toilet", emoji: "🚽", name: "الحمام", perHour: 1150, room: "bath"),
+        Meter(id: "health", emoji: "🤒", name: "الصحة", perHour: 900, room: "bedroom"),
     ]
 
     static func meter(_ id: String) -> Meter { meters.first { $0.id == id } ?? meters[0] }

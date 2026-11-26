@@ -75,6 +75,9 @@ struct Grip {
 /** جزيء صغير يطير ويختفي */
 struct Part: Identifiable { let id: Int; let emoji: String; let p: CGPoint; let d: CGSize; let size: CGFloat; let born: Date; let dur: Double }
 
+/** مشي من نقطة لنقطة (مكان القدمين) */
+struct Walk { let from: CGPoint; let to: CGPoint; let start: Date; let dur: Double; let done: () -> Void }
+
 /** أثر يطير فوق الرأس بعد الاستخدام */
 struct Puff: Identifiable { let id: Int; let emoji: String; let p: CGPoint }
 
@@ -103,6 +106,19 @@ struct SceneArea: View {
     @State private var puffUp = false
     @State private var now = Date()
     private let timer = Timer.publish(every: 4, on: .main, in: .common).autoconnect()
+    // حركة الشخصيات
+    @State private var pos: [String: CGPoint] = [:]
+    @State private var poses: [String: String] = [:]
+    @State private var facing: [String: CGFloat] = [:]
+    @State private var props: [String: String] = [:]
+    @State private var actFaces: [String: String] = [:]
+    @State private var walks: [String: Walk] = [:]
+    @State private var acting: Set<String> = []
+    @State private var actGen: [String: Int] = [:]
+    @State private var dragging: String? = nil
+    @State private var dragFrom: CGPoint? = nil
+    @State private var nextIdle = Date().addingTimeInterval(5)
+    private let step = Timer.publish(every: 1.0 / 30, on: .main, in: .common).autoconnect()
 
     private let trayH: CGFloat = 76
     private var art: RoomArt { RoomItems.art(room.id) }
@@ -116,9 +132,19 @@ struct SceneArea: View {
 
     private func footX(_ idx: Int) -> CGFloat { size.width * CGFloat(idx + 1) / CGFloat(kids.count + 1) }
 
+    /** مكان قدمي الطفل */
+    private func feet(_ idx: Int) -> CGPoint { pos[kids[idx].id] ?? CGPoint(x: footX(idx), y: groundY) }
+
     private func frameOf(_ idx: Int) -> CGRect {
         let h = charH(kids[idx].id), w = h * 0.45
-        return CGRect(x: footX(idx) - w / 2, y: groundY - h, width: w, height: h)
+        let f = feet(idx)
+        return CGRect(x: f.x - w / 2, y: f.y - h, width: w, height: h)
+    }
+
+    /** حدود الأرضية (مكان القدمين) */
+    private var floorBand: (CGFloat, CGFloat) {
+        let t = offY + art.floorTop * art.ih * scale
+        return (t < groundY - 10 ? t + (groundY - t) * 0.1 : groundY, groundY)
     }
 
     var body: some View {
@@ -130,18 +156,29 @@ struct SceneArea: View {
                         .frame(width: size.width, height: imgH)
                         .position(x: size.width / 2, y: offY + imgH / 2)
                     let _ = now
+                    // الشخصيات: الأقرب للشاشة يرسم فوق
+                    ZStack(alignment: .topLeading) {
+                        ForEach(Array(kids.enumerated()), id: \.1.id) { idx, kid in
+                            let r = frameOf(idx)
+                            let pose = poses[kid.id] ?? "front"
+                            CharacterFigure(kid: kid, walking: walks[kid.id] != nil, carrying: props[kid.id], bend: bounceKid == kid.id ? 0.5 : 0,
+                                            face: faces[kid.id] ?? actFaces[kid.id], pose: pose, facing: facing[kid.id] ?? 1, held: dragging == kid.id)
+                                .frame(width: pose == "crawl" ? r.height * 0.72 : r.width, height: r.height)
+                                .overlay(alignment: .top) {
+                                    if let l = chat.lines[kid.id] {
+                                        Bubble(text: l).environment(\.layoutDirection, .rightToLeft).offset(y: pose == "crawl" ? r.height * 0.5 - 34 : -34)
+                                    }
+                                }
+                                .scaleEffect(selected == kid.id ? 1.06 : 1, anchor: .bottom)
+                                .contentShape(Rectangle())
+                                .gesture(kidDrag(kid))
+                                .position(x: r.midX, y: r.midY)
+                                .zIndex(Double(r.maxY))
+                        }
+                    }
+                    .frame(width: size.width, height: size.height, alignment: .topLeading)
                     ForEach(Array(kids.enumerated()), id: \.1.id) { idx, kid in
                         let r = frameOf(idx)
-                        CharacterFigure(kid: kid, walking: false, carrying: nil, bend: bounceKid == kid.id ? 0.5 : 0, face: faces[kid.id])
-                            .frame(width: r.width, height: r.height)
-                            .overlay(alignment: .top) {
-                                if let l = chat.lines[kid.id] {
-                                    Bubble(text: l).environment(\.layoutDirection, .rightToLeft).offset(y: -34)
-                                }
-                            }
-                            .scaleEffect(selected == kid.id ? 1.06 : 1, anchor: .bottom)
-                            .position(x: r.midX, y: r.midY)
-                            .onTapGesture { tapKid(kid) }
                         if let m = Needs.lowest(store, kid.id), chat.lines[kid.id] == nil {
                             Text(m.emoji).font(.system(size: 26))
                                 .frame(width: 48, height: 48)
@@ -206,6 +243,7 @@ struct SceneArea: View {
         }
         .environment(\.layoutDirection, .leftToRight)
         .onReceive(timer) { now = $0 }
+        .onReceive(step) { t in stepWalks(t) }
         .onDisappear { chat.stop() }
     }
 
@@ -257,7 +295,7 @@ struct SceneArea: View {
                                 Text(m.emoji).font(.system(size: 14))
                                 ZStack(alignment: .leading) {
                                     Capsule().fill(Color(hex: 0xDEE2E6)).frame(width: 44, height: 9)
-                                    Capsule().fill(v < Needs.low ? red : v < 65 ? Color(hex: 0xF59F00) : green)
+                                    Capsule().fill(v < Needs.low ? red : v < 80 ? Color(hex: 0xF59F00) : green)
                                         .frame(width: max(4, 44 * v / 100), height: 9)
                                 }
                             }
@@ -274,14 +312,15 @@ struct SceneArea: View {
         size = s
         selected = kids.first?.id
         withAnimation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true)) { wob = true }
-        chat.start(visible: { kids }, roomOf: { _ in room.id })
+        chat.start(store: store, visible: { kids.filter { !acting.contains($0.id) && dragging != $0.id } }, roomOf: { _ in room.id })
     }
 
     private func tapKid(_ kid: Kid) {
+        cancelAct(kid.id)
         Sound.shared.tap()
         selected = kid.id
         bump(kid.id)
-        let line = Needs.lowest(store, kid.id).map { Needs.needLine(store, kid, $0) } ?? (Talk.solo(kid, room.id).randomElement() ?? "")
+        let line = Needs.lowest(store, kid.id).map { Needs.needLine(store, kid, $0) } ?? Acts.soloLine(store, kid, room.id)
         chat.say(kid.id, line)
         Speaker.shared.say(line, as: kid.id)
     }
@@ -337,6 +376,7 @@ struct SceneArea: View {
         if gr.kid != kidId {
             gr.kid = kidId
             gr.engaged = true
+            cancelAct(kidId)
             selected = kidId
             if store.need(kidId, tool.meter) >= 95 {
                 if !gr.warned {
@@ -518,7 +558,8 @@ struct SceneArea: View {
         store.addNeed(kid.id, t.meter, t.amount)
         Sound.shared.success()
         bump(kid.id)
-        let line = Needs.react(kid, t.meter)
+        // عبارة تناسب المهمة اللي خلصت (أكل، تفريش، دش، لعب...)
+        let line = Acts.doneLine(kid, t.kind) ?? Needs.react(kid, t.meter)
         chat.say(kid.id, line); Speaker.shared.say(line, as: kid.id)
         guard let idx = kids.firstIndex(where: { $0.id == kid.id }) else { return }
         let r = frameOf(idx)
@@ -526,5 +567,149 @@ struct SceneArea: View {
         puffs = (0..<3).map { Puff(id: $0, emoji: Needs.effect(t.meter), p: CGPoint(x: r.minX + r.width * (0.25 + 0.25 * CGFloat($0)), y: r.minY + r.height * 0.1)) }
         DispatchQueue.main.async { withAnimation(.easeOut(duration: 0.9)) { puffUp = true } }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { puffs = [] }
+    }
+
+    // MARK: - حركة الشخصيات: المشي والأنشطة والسحب
+
+    private func idx(_ id: String) -> Int? { kids.firstIndex { $0.id == id } }
+
+    private func stepWalks(_ t: Date) {
+        guard size != .zero else { return }
+        for (id, w) in walks {
+            let f = min(1, t.timeIntervalSince(w.start) / w.dur)
+            pos[id] = CGPoint(x: w.from.x + (w.to.x - w.from.x) * f, y: w.from.y + (w.to.y - w.from.y) * f)
+            if f >= 1 { walks[id] = nil; w.done() }
+        }
+        if t >= nextIdle {
+            nextIdle = t.addingTimeInterval(Double.random(in: 8...15))
+            idleTick()
+        }
+    }
+
+    /** مشي واقعي: جانبي لما يمشي يمين أو يسار، ظهر لما يبعد، ووجه لما يقرب */
+    private func walkTo(_ id: String, _ to: CGPoint, crawl: Bool, _ done: @escaping () -> Void) {
+        guard let i = idx(id) else { return }
+        let from = feet(i)
+        let dx = to.x - from.x, dy = to.y - from.y
+        let dist = hypot(dx, dy)
+        walks[id] = nil
+        if dist < 6 { done(); return }
+        poses[id] = crawl ? "crawl" : abs(dx) >= abs(dy) * 0.8 ? "side" : dy < 0 ? "back" : "front"
+        if abs(dx) > 2 { facing[id] = dx < 0 ? -1 : 1 }
+        let speed: CGFloat = crawl ? 70 : 120
+        walks[id] = Walk(from: from, to: to, start: Date(), dur: min(7, max(0.3, Double(dist / speed))), done: done)
+    }
+
+    private func idleTick() {
+        guard grip == nil else { return }
+        guard let kid = kids.filter({ !acting.contains($0.id) && dragging != $0.id }).randomElement(), let i = idx(kid.id) else { return }
+        let (top, bot) = floorBand
+        let half = frameOf(i).width / 2
+        let id = kid.id
+        guard let act = Acts.forKid(store, kid, room.id).randomElement() else {
+            // ما فيه نشاط: يتمشى لمكان ثاني
+            acting.insert(id)
+            let g = (actGen[id] ?? 0) + 1; actGen[id] = g
+            walkTo(id, CGPoint(x: CGFloat.random(in: half...(size.width - half)), y: CGFloat.random(in: top...bot)), crawl: false) {
+                if actGen[id] == g { endAct(id) }
+            }
+            return
+        }
+        runAct(kid, act)
+    }
+
+    private func runAct(_ kid: Kid, _ act: Act) {
+        let id = kid.id
+        guard let i = idx(id) else { return }
+        acting.insert(id)
+        let g = (actGen[id] ?? 0) + 1; actGen[id] = g
+        let ok = { actGen[id] == g }
+        let (top, bot) = floorBand
+        let crawl = act.pose == "crawl"
+        let half = frameOf(i).width / 2
+        let w = size.width
+        let tx = min(max((act.fx < 0 ? CGFloat.random(in: 0.15...0.85) : act.fx) * w, half), w - half)
+        let tf = act.fx < 0 ? CGFloat.random(in: top...bot) : top + (bot - top) * 0.12
+        walkTo(id, CGPoint(x: tx, y: tf), crawl: crawl) {
+            guard ok() else { return }
+            if act.pre > 0 { poses[id] = "back" } // يدور للرف أو الثلاجة يطلع الغرض
+            DispatchQueue.main.asyncAfter(deadline: .now() + act.pre) {
+                guard ok() else { return }
+                poses[id] = act.pose
+                props[id] = act.prop
+                actFaces[id] = act.face
+                let pool = act.lines[Acts.group(kid)] ?? []
+                guard !pool.isEmpty else { endAct(id); return }
+                let line = pool[store.nextFromPool("act_\(id)_\(act.id)", pool.count)]
+                chat.talk(id, line)
+                if let m = act.meter { store.addNeed(id, m, 15) }
+                for n in 0..<5 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3 + Double(n) * 0.8) {
+                        guard ok(), let j = idx(id) else { return }
+                        if act.id == "read" { props[id] = n % 2 == 0 ? "📖" : "📃" } // تقليب الصفحات
+                        let r = frameOf(j)
+                        spawn(act.parts.randomElement() ?? "✨", CGPoint(x: r.midX + rnd(-30, 30), y: r.minY + r.height * (crawl ? 0.6 : 0.25)), 20, CGSize(width: rnd(-25, 25), height: -50), 1.0)
+                    }
+                }
+                if crawl {
+                    // يكمل الحبو ويدف السيارة لمكان ثاني
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                        guard ok() else { return }
+                        walkTo(id, CGPoint(x: CGFloat.random(in: half...(w - half)), y: CGFloat.random(in: top...bot)), crawl: true) { if ok() { endAct(id) } }
+                    }
+                } else {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 4.5) { if ok() { endAct(id) } }
+                }
+            }
+        }
+    }
+
+    private func endAct(_ id: String) {
+        acting.remove(id)
+        props[id] = nil
+        actFaces[id] = nil
+        poses[id] = "front"
+    }
+
+    /** يوقف أي نشاط: لما يلمسه الطفل أو يسحبه أو يستخدم عليه أداة */
+    private func cancelAct(_ id: String) {
+        actGen[id] = (actGen[id] ?? 0) + 1
+        if let w = walks[id] {
+            let f = min(1, Date().timeIntervalSince(w.start) / w.dur)
+            pos[id] = CGPoint(x: w.from.x + (w.to.x - w.from.x) * f, y: w.from.y + (w.to.y - w.from.y) * f)
+            walks[id] = nil
+        }
+        endAct(id)
+    }
+
+    /** الطفل ينسحب لأي مكان، ولما ينترك ينزل على الأرضية؛ واللمسة تخليه يلتفت ويتكلم */
+    private func kidDrag(_ kid: Kid) -> some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named("scene"))
+            .onChanged { v in
+                guard grip == nil, let i = idx(kid.id) else { return }
+                if dragging != kid.id {
+                    guard hypot(v.translation.width, v.translation.height) > 12 else { return }
+                    cancelAct(kid.id)
+                    dragFrom = feet(i)
+                    dragging = kid.id
+                    Sound.shared.pickUp()
+                }
+                guard let f0 = dragFrom else { return }
+                let half = frameOf(i).width / 2
+                pos[kid.id] = CGPoint(x: min(max(f0.x + v.translation.width, half), size.width - half),
+                                      y: min(max(f0.y + v.translation.height, frameOf(i).height * 0.5), size.height))
+            }
+            .onEnded { v in
+                if dragging == kid.id {
+                    dragging = nil
+                    dragFrom = nil
+                    guard let i = idx(kid.id) else { return }
+                    let (top, bot) = floorBand
+                    let f = feet(i)
+                    walks[kid.id] = Walk(from: f, to: CGPoint(x: f.x, y: min(max(f.y, top), bot)), start: Date(), dur: 0.26) { bump(kid.id) }
+                } else if grip == nil, hypot(v.translation.width, v.translation.height) < 12 {
+                    tapKid(kid)
+                }
+            }
     }
 }

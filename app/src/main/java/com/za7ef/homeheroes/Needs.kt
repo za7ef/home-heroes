@@ -20,15 +20,16 @@ data class Tool(val emoji: String, val name: String, val meter: String, val amou
 data class ToolUse(val rub: Float, val hold: Float, val face: String?)
 
 object Needs {
-    const val LOW = 35f
+    /** حد الاحتياج: تحته تظهر أيقونة الاحتياج وعباراته */
+    const val LOW = 60f
 
     val meters = listOf(
-        Meter("hunger", "🍎", "الأكل", 14f, "kitchen"),
-        Meter("clean", "🛁", "النظافة", 9f, "bath"),
-        Meter("sleep", "😴", "النوم", 7f, "bedroom"),
-        Meter("fun", "⚽", "اللعب", 18f, "living"),
-        Meter("toilet", "🚽", "الحمام", 12f, "bath"),
-        Meter("health", "🤒", "الصحة", 3f, "bedroom"),
+        Meter("hunger", "🍎", "الأكل", 1350f, "kitchen"),
+        Meter("clean", "🛁", "النظافة", 1100f, "bath"),
+        Meter("sleep", "😴", "النوم", 950f, "bedroom"),
+        Meter("fun", "⚽", "اللعب", 1300f, "living"),
+        Meter("toilet", "🚽", "الحمام", 1150f, "bath"),
+        Meter("health", "🤒", "الصحة", 900f, "bedroom"),
     )
 
     fun meter(id: String): Meter = meters.first { it.id == id }

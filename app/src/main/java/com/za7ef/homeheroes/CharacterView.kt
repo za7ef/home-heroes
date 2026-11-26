@@ -55,6 +55,18 @@ class CharacterView(ctx: Context, val kid: Kid) : View(ctx) {
     var bend = 0f
         set(v) { field = v; invalidate() }
 
+    /** وضعية الرسم: front أمام، side جانب (أثناء المشي يمين ويسار)، back ظهر، crawl حبو (أيان) */
+    var pose = "front"
+        set(v) { if (field != v) { field = v; invalidate() } }
+
+    /** اتجاه الوجه في الوضعية الجانبية: 1 يمين، -1 يسار */
+    var facing = 1f
+        set(v) { if (field != v) { field = v; invalidate() } }
+
+    /** مرفوع بالإصبع: يتأرجح شوي */
+    var held = false
+        set(v) { field = v; invalidate() }
+
     /** تعبير الوجه أثناء استخدام أداة: teeth، chew، open، sleep أو null */
     var face: String? = null
         set(v) { if (field != v) { field = v; invalidate() } }
@@ -86,6 +98,9 @@ class CharacterView(ctx: Context, val kid: Kid) : View(ctx) {
     private val legL = bmp("legl")
     private val legR = bmp("legr")
     private val rig = Rigs.of(kid.id)
+    private val side = bmp("side")
+    private val backImg = bmp("back")
+    private val crawl = bmp("crawl")
     private val bmpPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val emojiPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     private val rect = RectF()
@@ -121,6 +136,11 @@ class CharacterView(ctx: Context, val kid: Kid) : View(ctx) {
         val s = minOf(vh / rig.h, vw / rig.w)
         val ox = (vw - rig.w * s) / 2f
         val oy = vh - rig.h * s
+        when {
+            pose == "crawl" && crawl != null -> { drawCrawl(c, vw, vh, t); return }
+            pose == "side" && side != null -> { drawFlat(c, side, vw, vh, t, facing < 0); return }
+            pose == "back" && backImg != null -> { drawFlat(c, backImg, vw, vh, t, false); return }
+        }
         val swing = if (walking) sin(t) else 0f
         val bob = if (walking) -abs(sin(t)) * rig.h * 0.02f else sin(t) * rig.h * 0.004f
 
@@ -145,7 +165,7 @@ class CharacterView(ctx: Context, val kid: Kid) : View(ctx) {
         // ---- الجسم والرأس: يهتز مع المشي، وينحني للأمام عند الالتقاط ----
         c.save()
         c.translate(0f, bob + bend * rig.h * 0.05f)
-        c.rotate(bend * 10f + (if (walking) swing * 2f else 0f), rig.w / 2f, hipY)
+        c.rotate(bend * 10f + (if (walking) swing * 2f else 0f) + (if (held) sin(t) * 5f else 0f), rig.w / 2f, hipY)
         body?.let {
             rect.set(0f, 0f, rig.w, rig.h)
             c.drawBitmap(it, null, rect, bmpPaint)
@@ -158,6 +178,41 @@ class CharacterView(ctx: Context, val kid: Kid) : View(ctx) {
             c.drawText(it, rig.w / 2f, rig.legY * 0.78f, emojiPaint)
         }
         c.restore()
+        c.restore()
+    }
+
+    /** صورة جانبية أو خلفية كاملة: المشي بهزة ونطة خفيفة بدل تحريك الرجلين */
+    private fun drawFlat(c: Canvas, img: Bitmap, vw: Float, vh: Float, t: Float, flip: Boolean) {
+        val s = minOf(vh / img.height, vw / img.width)
+        val w = img.width * s; val h = img.height * s
+        val bob = if (walking) -abs(sin(t * 2f)) * h * 0.025f else sin(t) * h * 0.004f
+        val squash = if (walking) 1f - abs(sin(t * 2f)) * 0.03f else 1f
+        c.save()
+        c.translate(vw / 2f, vh)
+        if (flip) c.scale(-1f, 1f)
+        if (held) c.rotate(sin(t) * 6f, 0f, -h)
+        c.scale(1f, squash)
+        rect.set(-w / 2f, -h + bob, w / 2f, bob)
+        c.drawBitmap(img, null, rect, bmpPaint)
+        c.restore()
+        carrying?.let {
+            emojiPaint.textSize = w * 0.5f
+            c.drawText(it, vw / 2f + (if (flip) -w else w) * 0.3f, vh - h * 0.38f, emojiPaint)
+        }
+    }
+
+    /** أيان يحبو ويدف سيارته: الصورة أعرض من إطار الشخصية فترسم خارجه قليلًا */
+    private fun drawCrawl(c: Canvas, vw: Float, vh: Float, t: Float) {
+        val img = crawl ?: return
+        val h = vh * 0.5f
+        val w = h * img.width / img.height
+        val rock = if (walking) sin(t * 2f) * 2.5f else 0f
+        c.save()
+        c.translate(vw / 2f, vh)
+        if (facing < 0) c.scale(-1f, 1f)
+        c.rotate(rock, 0f, 0f)
+        rect.set(-w / 2f, -h - (if (walking) abs(sin(t * 2f)) * h * 0.03f else 0f), w / 2f, 0f)
+        c.drawBitmap(img, null, rect, bmpPaint)
         c.restore()
     }
 
